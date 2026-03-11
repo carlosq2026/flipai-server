@@ -1,175 +1,48 @@
 const express = require('express');
-const cors = require('cors');
 const fetch = require('node-fetch');
 const app = express();
-
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') return res.sendStatus(200);
-  next();
-});
-app.use(cors({ origin: '*' }));
-app.use(express.json({ limit: '50mb' }));
-
 const PORT = process.env.PORT || 3000;
 
-// Health check
+// FORCE CORS ON EVERYTHING
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', '*');
+  res.setHeader('Access-Control-Allow-Headers', '*');
+  if (req.method === 'OPTIONS') { res.status(200).end(); return; }
+  next();
+});
+
+app.use(express.json({ limit: '10mb' }));
+
 app.get('/', (req, res) => {
-  res.json({ status: 'FlipAI eBay Server Running ✅', version: '1.0' });
+  res.json({ status: 'ok', message: 'FlipAI Server Running' });
 });
 
-// Post listing to eBay
 app.post('/post-listing', async (req, res) => {
-  const { userToken, appId, listing } = req.body;
+  const { listing } = req.body;
+  if (!listing) return res.status(400).json({ success: false, message: 'No listing data' });
 
-  if (!userToken || !appId || !listing) {
-    return res.status(400).json({ error: 'Missing userToken, appId, or listing data' });
-  }
+  const token = process.env.EBAY_USER_TOKEN;
+  const appId = process.env.EBAY_APP_ID;
+  const postal = process.env.POSTAL_CODE || '90001';
 
-  try {
-    // Step 1: Create inventory item
-    const sku = 'BOOK-' + Date.now();
+  if (!token) return res.status(500).json({ success: false, message: 'EBAY_USER_TOKEN not set on server' });
 
-    const inventoryItem = {
-      availability: {
-        shipToLocationAvailability: {
-          quantity: 1
-        }
-      },
-      condition: listing.condition === 'Like New' ? 'LIKE_NEW' :
-                 listing.condition === 'Good' ? 'GOOD' :
-                 listing.condition === 'Acceptable' ? 'ACCEPTABLE' : 'USED_GOOD',
-      product: {
-        title: listing.title,
-        description: listing.description,
-        aspects: {
-          'Format': ['Paperback'],
-          'Language': ['English']
-        },
-        imageUrls: listing.imageUrls || []
-      }
-    };
-
-    const invRes = await fetch(`https://api.ebay.com/sell/inventory/v1/inventory_item/${sku}`, {
-      method: 'PUT',
-      headers: {
-        'Authorization': 'Bearer ' + userToken,
-        'Content-Type': 'application/json',
-        'Content-Language': 'en-US'
-      },
-      body: JSON.stringify(inventoryItem)
-    });
-
-    if (!invRes.ok && invRes.status !== 204) {
-      const errData = await invRes.json();
-      throw new Error('Inventory error: ' + JSON.stringify(errData));
-    }
-
-    // Step 2: Create offer
-    const offer = {
-      sku: sku,
-      marketplaceId: 'EBAY_US',
-      format: 'FIXED_PRICE',
-      availableQuantity: 1,
-      categoryId: '261186', // Books category
-      listingDescription: listing.description,
-      listingPolicies: {
-        fulfillmentPolicyId: process.env.FULFILLMENT_POLICY_ID || '',
-        paymentPolicyId: process.env.PAYMENT_POLICY_ID || '',
-        returnPolicyId: process.env.RETURN_POLICY_ID || ''
-      },
-      pricingSummary: {
-        price: {
-          value: String(listing.price),
-          currency: 'USD'
-        }
-      },
-      merchantLocationKey: process.env.MERCHANT_LOCATION_KEY || 'default'
-    };
-
-    const offerRes = await fetch('https://api.ebay.com/sell/inventory/v1/offer', {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + userToken,
-        'Content-Type': 'application/json',
-        'Content-Language': 'en-US'
-      },
-      body: JSON.stringify(offer)
-    });
-
-    const offerData = await offerRes.json();
-    if (!offerRes.ok) throw new Error('Offer error: ' + JSON.stringify(offerData));
-
-    const offerId = offerData.offerId;
-
-    // Step 3: Publish offer
-    const publishRes = await fetch(`https://api.ebay.com/sell/inventory/v1/offer/${offerId}/publish`, {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Bearer ' + userToken,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    const publishData = await publishRes.json();
-    if (!publishRes.ok) throw new Error('Publish error: ' + JSON.stringify(publishData));
-
-    res.json({
-      success: true,
-      listingId: publishData.listingId,
-      message: 'Listed on eBay! ✅',
-      ebayUrl: `https://www.ebay.com/itm/${publishData.listingId}`
-    });
-
-  } catch (err) {
-    console.error('eBay posting error:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Simple listing via Trading API (easier, uses Auth'n'Auth token)
-app.post('/post-trading', async (req, res) => {
-  const { userToken, listing } = req.body;
-
-  if (!userToken || !listing) {
-    return res.status(400).json({ error: 'Missing userToken or listing' });
-  }
-
-  const xmlBody = `<?xml version="1.0" encoding="utf-8"?>
+  const xml = `<?xml version="1.0" encoding="utf-8"?>
 <AddItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
-  <RequesterCredentials>
-    <eBayAuthToken>${userToken}</eBayAuthToken>
-  </RequesterCredentials>
-  <ErrorLanguage>en_US</ErrorLanguage>
-  <WarningLevel>High</WarningLevel>
+  <RequesterCredentials><eBayAuthToken>${token}</eBayAuthToken></RequesterCredentials>
   <Item>
-    <Title>${escXml(listing.title)}</Title>
-    <Description><![CDATA[${listing.description}]]></Description>
-    <PrimaryCategory>
-      <CategoryID>261186</CategoryID>
-    </PrimaryCategory>
+    <Title>${esc(listing.title)}</Title>
+    <Description><![CDATA[${listing.description || listing.title}]]></Description>
+    <PrimaryCategory><CategoryID>261186</CategoryID></PrimaryCategory>
     <StartPrice>${listing.price}</StartPrice>
-    <CategoryMappingAllowed>true</CategoryMappingAllowed>
     <Country>US</Country>
     <Currency>USD</Currency>
     <DispatchTimeMax>3</DispatchTimeMax>
     <ListingDuration>GTC</ListingDuration>
     <ListingType>FixedPriceItem</ListingType>
-    <PaymentMethods>PayPal</PaymentMethods>
-    <PayPalEmailAddress>${process.env.PAYPAL_EMAIL || ''}</PayPalEmailAddress>
-    <PictureDetails>
-      ${(listing.imageUrls || []).map(url => `<PictureURL>${url}</PictureURL>`).join('\n      ')}
-    </PictureDetails>
-    <PostalCode>${process.env.POSTAL_CODE || '90001'}</PostalCode>
+    <PostalCode>${postal}</PostalCode>
     <Quantity>1</Quantity>
-    <ReturnPolicy>
-      <ReturnsAcceptedOption>ReturnsAccepted</ReturnsAcceptedOption>
-      <RefundOption>MoneyBack</RefundOption>
-      <ReturnsWithinOption>Days_30</ReturnsWithinOption>
-      <ShippingCostPaidByOption>Buyer</ShippingCostPaidByOption>
-    </ReturnPolicy>
     <ShippingDetails>
       <ShippingType>Flat</ShippingType>
       <ShippingServiceOptions>
@@ -178,50 +51,45 @@ app.post('/post-trading', async (req, res) => {
         <ShippingServiceCost>3.99</ShippingServiceCost>
       </ShippingServiceOptions>
     </ShippingDetails>
-    <Site>US</Site>
+    <ReturnPolicy>
+      <ReturnsAcceptedOption>ReturnsNotAccepted</ReturnsAcceptedOption>
+    </ReturnPolicy>
     <ConditionID>3000</ConditionID>
+    <Site>US</Site>
   </Item>
 </AddItemRequest>`;
 
   try {
-    const tradingRes = await fetch('https://api.ebay.com/ws/api.dll', {
+    const r = await fetch('https://api.ebay.com/ws/api.dll', {
       method: 'POST',
       headers: {
+        'Content-Type': 'text/xml',
         'X-EBAY-API-SITEID': '0',
         'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
         'X-EBAY-API-CALL-NAME': 'AddItem',
-        'X-EBAY-API-APP-NAME': process.env.EBAY_APP_ID || '',
-        'X-EBAY-API-DEV-NAME': process.env.EBAY_DEV_ID || '',
-        'X-EBAY-API-CERT-NAME': process.env.EBAY_CERT_ID || '',
-        'Content-Type': 'text/xml'
+        'X-EBAY-API-APP-NAME': appId || ''
       },
-      body: xmlBody
+      body: xml
     });
 
-    const responseText = await tradingRes.text();
+    const text = await r.text();
+    console.log('eBay response:', text.substring(0, 500));
 
-    if (responseText.includes('<Ack>Success</Ack>') || responseText.includes('<Ack>Warning</Ack>')) {
-      const itemIdMatch = responseText.match(/<ItemID>(\d+)<\/ItemID>/);
-      const itemId = itemIdMatch ? itemIdMatch[1] : 'unknown';
-      res.json({
-        success: true,
-        listingId: itemId,
-        message: 'Listed on eBay! ✅',
-        ebayUrl: `https://www.ebay.com/itm/${itemId}`
-      });
+    if (text.includes('<Ack>Success</Ack>') || text.includes('<Ack>Warning</Ack>')) {
+      const match = text.match(/<ItemID>(\d+)<\/ItemID>/);
+      const itemId = match ? match[1] : 'unknown';
+      res.json({ success: true, itemId, url: 'https://www.ebay.com/itm/' + itemId });
     } else {
-      const errorMatch = responseText.match(/<LongMessage>(.*?)<\/LongMessage>/);
-      throw new Error(errorMatch ? errorMatch[1] : 'eBay listing failed');
+      const err = text.match(/<LongMessage>(.*?)<\/LongMessage>/);
+      res.status(400).json({ success: false, message: err ? err[1] : 'eBay rejected listing', raw: text.substring(0, 300) });
     }
-
-  } catch(err) {
-    console.error('Trading API error:', err);
-    res.status(500).json({ error: err.message });
+  } catch(e) {
+    res.status(500).json({ success: false, message: e.message });
   }
 });
 
-function escXml(str) {
-  return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function esc(s) {
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-app.listen(PORT, () => console.log(`FlipAI Server running on port ${PORT}`));
+app.listen(PORT, () => console.log('FlipAI running on port ' + PORT));
