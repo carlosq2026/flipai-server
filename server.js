@@ -176,6 +176,19 @@ app.get('/', function(req, res) {
   h += '.toast{background:#1a1a26;border:1px solid #00e5a0;border-radius:8px;padding:12px 16px;font-size:0.82rem}';
   h += '.toast.err{border-color:#ff6b35}';
   h += '.grouping-badge{background:#7c6bff;color:white;font-size:0.65rem;padding:2px 8px;border-radius:100px;font-weight:bold}';
+  h += '.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px}';
+  h += '.modal{background:#1a1a26;border:1px solid #00e5a0;border-radius:16px;padding:24px;max-width:520px;width:100%}';
+  h += '.modal h3{font-size:1.1rem;font-weight:800;color:#00e5a0;margin-bottom:4px}';
+  h += '.modal .sub{font-size:0.75rem;color:#6b6b8a;margin-bottom:16px}';
+  h += '.modal-img{width:100%;height:220px;object-fit:contain;background:#12121a;border-radius:10px;margin-bottom:14px}';
+  h += '.modal-thumbs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}';
+  h += '.modal-thumb{width:58px;height:58px;object-fit:cover;border-radius:6px;border:2px solid #2a2a3d;cursor:pointer}';
+  h += '.modal-thumb.sel{border-color:#00e5a0}';
+  h += '.modal-info{background:#12121a;border-radius:8px;padding:12px;margin-bottom:14px;font-size:0.8rem}';
+  h += '.modal-info .row{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #2a2a3d}';
+  h += '.modal-info .row:last-child{border:none}';
+  h += '.modal-info .lbl{color:#6b6b8a}.modal-info .val{color:#f0f0ff;font-weight:bold;text-align:right;max-width:60%}';
+  h += '.modal-actions{display:flex;gap:10px}';
   h += '</style></head><body>';
 
   h += '<h1>FlipAI - Bookslayer Edition</h1>';
@@ -217,10 +230,27 @@ app.get('/', function(req, res) {
 
   h += '<div class="grid" id="grid"></div>';
   h += '<div class="toast-wrap" id="toasts"></div>';
+  h += '<div class="modal-bg" id="confirmModal" style="display:none">';
+  h += '<div class="modal">';
+  h += '<h3>Confirm Before Posting</h3>';
+  h += '<div class="sub" id="confirmSub">Check this is the right book before it goes live on eBay</div>';
+  h += '<img class="modal-img" id="confirmMainImg" src="">';
+  h += '<div class="modal-thumbs" id="confirmThumbs"></div>';
+  h += '<div class="modal-info">';
+  h += '<div class="row"><span class="lbl">Title</span><span class="val" id="confirmTitle"></span></div>';
+  h += '<div class="row"><span class="lbl">Author</span><span class="val" id="confirmAuthor"></span></div>';
+  h += '<div class="row"><span class="lbl">Format</span><span class="val" id="confirmFormat"></span></div>';
+  h += '<div class="row"><span class="lbl">Price</span><span class="val" id="confirmPrice"></span></div>';
+  h += '<div class="row"><span class="lbl">Photos</span><span class="val" id="confirmPhotos"></span></div>';
+  h += '</div>';
+  h += '<div class="modal-actions">';
+  h += '<button class="btn" style="flex:1" id="confirmYes">✓ Yes, Post to eBay</button>';
+  h += '<button class="btn btn-orange" style="flex:1;background:#ff6b35;color:white" id="confirmNo">✗ Cancel</button>';
+  h += '</div></div></div>';
 
   h += '<script>';
   h += 'var items=[],busy=false;';
-  h += 'var GAP_SECONDS=5;'; // photos within 5s = same book
+  h += 'var GAP_SECONDS=30;'; // photos within 5s = same book
   h += 'var drop=document.getElementById("drop");';
   h += 'drop.addEventListener("dragover",function(e){e.preventDefault();drop.classList.add("over")});';
   h += 'drop.addEventListener("dragleave",function(){drop.classList.remove("over")});';
@@ -244,7 +274,7 @@ app.get('/', function(req, res) {
   h += '  if(cur.length===0){cur.push(imgs[i]);}';
   h += '  else{';
   h += '    var gap=(imgs[i].lastModified-imgs[i-1].lastModified)/1000;';
-  h += '    if(gap<=GAP_SECONDS&&cur.length<9){cur.push(imgs[i]);}';
+  h += '    if(gap<=GAP_SECONDS&&cur.length<12){cur.push(imgs[i]);}';
   h += '    else{groups.push(cur);cur=[imgs[i]];}';
   h += '  }';
   h += '}';
@@ -308,7 +338,29 @@ app.get('/', function(req, res) {
 
   h += 'function refresh(item){var n=items.indexOf(item)+1;var c=document.getElementById("c"+item.id);if(c){c.className="card "+item.status;c.innerHTML=cardHTML(item,n)}}';
 
+  h += 'var confirmCallback=null;';
+  h += 'document.getElementById("confirmYes").onclick=function(){document.getElementById("confirmModal").style.display="none";if(confirmCallback)confirmCallback()};';
+  h += 'document.getElementById("confirmNo").onclick=function(){document.getElementById("confirmModal").style.display="none";confirmCallback=null;toast("Cancelled","")};';
+
+  h += 'function showConfirm(item,onConfirm){';
+  h += 'var mi=item.mainIdx||0;';
+  h += 'var n=items.indexOf(item)+1;';
+  h += 'document.getElementById("confirmSub").textContent="Book #"+n+" of "+items.length+" — Is this the right book?";';
+  h += 'document.getElementById("confirmMainImg").src=item.urls[mi];';
+  h += 'document.getElementById("confirmTitle").textContent=item.title;';
+  h += 'document.getElementById("confirmAuthor").textContent=item.author||"Unknown";';
+  h += 'document.getElementById("confirmFormat").textContent=item.format||"Unknown";';
+  h += 'document.getElementById("confirmPrice").textContent="$"+item.price;';
+  h += 'document.getElementById("confirmPhotos").textContent=item.files.length+" photo(s) will be uploaded";';
+  h += 'var thumbs=document.getElementById("confirmThumbs");thumbs.innerHTML="";';
+  h += 'item.urls.forEach(function(url,i){var img=document.createElement("img");img.className="modal-thumb"+(i===mi?" sel":"");img.src=url;img.onclick=function(){document.getElementById("confirmMainImg").src=url;item.mainIdx=i;Array.from(thumbs.children).forEach(function(c){c.classList.remove("sel")});img.classList.add("sel")};thumbs.appendChild(img)});';
+  h += 'confirmCallback=onConfirm;';
+  h += 'document.getElementById("confirmModal").style.display="flex"}';
+
   h += 'function postOne(id){var item=items.find(function(i){return i.id==id});if(!item)return;';
+  h += 'showConfirm(item,function(){doPost(item)})}';
+
+  h += 'function doPost(item){';
   h += 'item.status="posting";refresh(item);';
   h += 'var mi=item.mainIdx||0;';
   h += 'var orderedFiles=[item.files[mi]].concat(item.files.filter(function(_,i){return i!==mi}));';
@@ -323,7 +375,9 @@ app.get('/', function(req, res) {
   h += '}).then(function(){refresh(item)})}';
 
   h += 'function postAll(){var ready=items.filter(function(i){return i.status==="done"&&!i.ebayId});if(!ready.length){toast("Analyze items first","err");return}';
-  h += 'toast("Posting "+ready.length+" books to eBay...","");var i=0;function next(){if(i>=ready.length)return;postOne(ready[i].id);i++;setTimeout(next,3500)}next()}';
+  h += 'var i=0;function next(){if(i>=ready.length){toast("All done posting!","");return}';
+  h += 'var item=ready[i];';
+  h += 'showConfirm(item,function(){doPost(item);i++;setTimeout(next,3500)});}next()}';
 
   h += 'function updateStats(){';
   h += 'var total=items.length,analyzed=items.filter(function(i){return i.status==="done"||i.status==="posted"}).length;';
