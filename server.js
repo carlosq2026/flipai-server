@@ -22,7 +22,7 @@ app.post('/analyze', async function(req, res) {
     images.forEach(function(img) {
       content.push({ type: 'image', source: { type: 'base64', media_type: img.mimeType || 'image/jpeg', data: img.data } });
     });
-    content.push({ type: 'text', text: 'Analyze these book photos for eBay resale. Reply ONLY with raw JSON, no markdown: {"title":"Full Title by Author","author":"Author Name","bookTitle":"Book Title Only","format":"Hardcover or Paperback or Trade Paperback","language":"English","description":"2-3 sentence description mentioning condition","minPrice":5,"maxPrice":25,"avgPrice":12,"suggestedPrice":10}' });
+    content.push({ type: 'text', text: 'Analyze these book photos for eBay resale. Look carefully at the cover, spine, and back for all details. Reply ONLY with raw JSON, no markdown, use empty string if unknown: {"title":"Full Title by Author","author":"Author Name","bookTitle":"Book Title Only","format":"Hardcover or Paperback or Trade Paperback","language":"English","description":"2-3 sentence description mentioning condition and key features","genre":"e.g. Fiction, Mystery, Science, Biography, History, Self-Help, etc or empty","publisher":"Publisher name if visible or empty","publicationYear":"4-digit year if visible or empty","isbn":"ISBN-10 or ISBN-13 if visible on back cover or empty","topic":"Main subject or topic of the book or empty","minPrice":5,"maxPrice":25,"avgPrice":12,"suggestedPrice":10}' });
     var r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
@@ -85,7 +85,12 @@ app.post('/post-listing', async function(req, res) {
     specifics += '<NameValueList><n>Author</n><Value>' + esc(listing.author || 'Unknown') + '</Value></NameValueList>';
     if (listing.bookTitle) specifics += '<NameValueList><n>Book Title</n><Value>' + esc(listing.bookTitle) + '</Value></NameValueList>';
     if (listing.format) specifics += '<NameValueList><n>Format</n><Value>' + esc(listing.format) + '</Value></NameValueList>';
-    specifics += '<NameValueList><n>Language</n><Value>' + esc(listing.language || 'English') + '</Value></NameValueList>';
+    specifics += '<NameValueList><n>Language</n><Value>English</Value></NameValueList>';
+    if (listing.genre) specifics += '<NameValueList><n>Genre</n><Value>' + esc(listing.genre) + '</Value></NameValueList>';
+    if (listing.publisher) specifics += '<NameValueList><n>Publisher</n><Value>' + esc(listing.publisher) + '</Value></NameValueList>';
+    if (listing.publicationYear) specifics += '<NameValueList><n>Publication Year</n><Value>' + esc(listing.publicationYear) + '</Value></NameValueList>';
+    if (listing.isbn) specifics += '<NameValueList><n>ISBN</n><Value>' + esc(listing.isbn) + '</Value></NameValueList>';
+    if (listing.topic) specifics += '<NameValueList><n>Topic</n><Value>' + esc(listing.topic) + '</Value></NameValueList>';
     var xml = '<?xml version="1.0" encoding="utf-8"?><AddItemRequest xmlns="urn:ebay:apis:eBLBaseComponents"><RequesterCredentials><eBayAuthToken>' + token + '</eBayAuthToken></RequesterCredentials><Item>' +
       '<Title>' + esc(listing.title) + '</Title>' +
       '<Description><![CDATA[' + (listing.description || '') + ']]></Description>' +
@@ -282,7 +287,7 @@ app.get('/', function(req, res) {
   h += '    }\n';
   h += '  }\n';
   h += '  if(cur.length)groups.push(cur);\n';
-  h += '  groups.forEach(function(g){items.push({id:Date.now()+Math.random(),files:g,urls:g.map(function(f){return URL.createObjectURL(f)}),mainIdx:0,status:"idle",title:"",author:"",bookTitle:"",format:"",language:"English",desc:"",price:10,min:5,max:20,avg:12})});\n';
+  h += '  groups.forEach(function(g){items.push({id:Date.now()+Math.random(),files:g,urls:g.map(function(f){return URL.createObjectURL(f)}),mainIdx:0,status:"idle",title:"",author:"",bookTitle:"",format:"",language:"English",desc:"",genre:"",publisher:"",publicationYear:"",isbn:"",topic:"",price:10,min:5,max:20,avg:12})});\n';
   h += '  document.getElementById("statsWrap").style.display="block";\n';
   h += '  document.getElementById("gapInfo").textContent="Grouped "+imgs.length+" photos into "+groups.length+" books ("+GAP_SECONDS+"s gap rule)";\n';
   h += '  render();updateStats();toast("Grouped "+imgs.length+" photos into "+groups.length+" books!","")\n';
@@ -394,7 +399,7 @@ app.get('/', function(req, res) {
   h += '  var promises=orderedFiles.map(function(f){return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res({data:r.result.split(",")[1],mimeType:f.type||"image/jpeg"})};r.onerror=rej;r.readAsDataURL(f)})});\n';
   h += '  Promise.all(promises).then(function(images){\n';
   h += '    return fetch("/post-listing",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({\n';
-  h += '      listing:{title:item.title,author:item.author,bookTitle:item.bookTitle,format:item.format,language:item.language,description:item.desc,price:item.price},images:images})})\n';
+  h += '      listing:{title:item.title,author:item.author,bookTitle:item.bookTitle,format:item.format,language:item.language,description:item.desc,genre:item.genre,publisher:item.publisher,publicationYear:item.publicationYear,isbn:item.isbn,topic:item.topic,price:item.price},images:images})})\n';
   h += '    .then(function(r){return r.json()})\n';
   h += '    .then(function(d){\n';
   h += '      if(d.success){item.ebayId=d.itemId;item.ebayUrl=d.url;item.status="posted";toast("Posted! eBay #"+d.itemId,"");updateStats()}\n';
