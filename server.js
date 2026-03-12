@@ -82,7 +82,7 @@ app.post('/post-listing', async function(req, res) {
     }
     var pictureXml = uploadedUrls.length > 0 ? '<PictureDetails>' + uploadedUrls.map(function(u){ return '<PictureURL>' + u + '</PictureURL>'; }).join('') + '</PictureDetails>' : '';
     var specifics = '';
-    if (listing.author) specifics += '<NameValueList><n>Author</n><Value>' + esc(listing.author) + '</Value></NameValueList>';
+    specifics += '<NameValueList><n>Author</n><Value>' + esc(listing.author || 'Unknown') + '</Value></NameValueList>';
     if (listing.bookTitle) specifics += '<NameValueList><n>Book Title</n><Value>' + esc(listing.bookTitle) + '</Value></NameValueList>';
     if (listing.format) specifics += '<NameValueList><n>Format</n><Value>' + esc(listing.format) + '</Value></NameValueList>';
     specifics += '<NameValueList><n>Language</n><Value>' + esc(listing.language || 'English') + '</Value></NameValueList>';
