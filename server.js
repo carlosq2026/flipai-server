@@ -22,7 +22,7 @@ app.post('/analyze', async function(req, res) {
     images.forEach(function(img) {
       content.push({ type: 'image', source: { type: 'base64', media_type: img.mimeType || 'image/jpeg', data: img.data } });
     });
-    content.push({ type: 'text', text: 'Analyze these book photos for eBay resale. Look carefully at the cover, spine, and back for all details. Reply ONLY with raw JSON, no markdown, use empty string if unknown: {"title":"Full Title by Author","author":"Author Name","bookTitle":"Book Title Only","format":"Hardcover or Paperback or Trade Paperback","language":"English","description":"2-3 sentence description mentioning condition and key features","genre":"e.g. Fiction, Mystery, Science, Biography, History, Self-Help, etc or empty","publisher":"Publisher name if visible or empty","publicationYear":"4-digit year if visible or empty","isbn":"ISBN-10 or ISBN-13 if visible on back cover or empty","topic":"Main subject or topic of the book or empty","minPrice":5,"maxPrice":25,"avgPrice":12,"suggestedPrice":10}' });
+    content.push({ type: 'text', text: 'Analyze these book photos for eBay resale. Look carefully at ALL text on the cover, spine, and back — especially the author name which is almost always printed on the cover or spine. Reply ONLY with raw JSON, no markdown. Author is REQUIRED — if you can read the book cover, you can find the author. Use empty string only for truly unknown optional fields: {"title":"Full Title","author":"Author Full Name - REQUIRED, look on cover and spine","bookTitle":"Book Title Only without author","format":"Hardcover or Paperback or Trade Paperback","language":"English","description":"2-3 sentence description mentioning condition and key features","genre":"Fiction, Mystery, Science, Biography, History, Self-Help, etc or empty","publisher":"Publisher name if visible or empty","publicationYear":"4-digit year if visible or empty","isbn":"ISBN-10 or ISBN-13 if visible on back cover or empty","topic":"Main subject or topic of the book or empty","minPrice":5,"maxPrice":25,"avgPrice":12,"suggestedPrice":10}' });
     var r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
@@ -82,15 +82,15 @@ app.post('/post-listing', async function(req, res) {
     }
     var pictureXml = uploadedUrls.length > 0 ? '<PictureDetails>' + uploadedUrls.map(function(u){ return '<PictureURL>' + u + '</PictureURL>'; }).join('') + '</PictureDetails>' : '';
     var specifics = '';
-    specifics += '<NameValueList><n>Author</n><Value>' + esc(listing.author || 'Unknown') + '</Value></NameValueList>';
-    if (listing.bookTitle) specifics += '<NameValueList><n>Book Title</n><Value>' + esc(listing.bookTitle) + '</Value></NameValueList>';
-    if (listing.format) specifics += '<NameValueList><n>Format</n><Value>' + esc(listing.format) + '</Value></NameValueList>';
-    specifics += '<NameValueList><n>Language</n><Value>English</Value></NameValueList>';
-    if (listing.genre) specifics += '<NameValueList><n>Genre</n><Value>' + esc(listing.genre) + '</Value></NameValueList>';
-    if (listing.publisher) specifics += '<NameValueList><n>Publisher</n><Value>' + esc(listing.publisher) + '</Value></NameValueList>';
-    if (listing.publicationYear) specifics += '<NameValueList><n>Publication Year</n><Value>' + esc(listing.publicationYear) + '</Value></NameValueList>';
-    if (listing.isbn) specifics += '<NameValueList><n>ISBN</n><Value>' + esc(listing.isbn) + '</Value></NameValueList>';
-    if (listing.topic) specifics += '<NameValueList><n>Topic</n><Value>' + esc(listing.topic) + '</Value></NameValueList>';
+    specifics += '<NameValueList><Name>Author</Name><Value>' + esc(listing.author || 'Unknown') + '</Value></NameValueList>';
+    if (listing.bookTitle) specifics += '<NameValueList><Name>Book Title</Name><Value>' + esc(listing.bookTitle) + '</Value></NameValueList>';
+    if (listing.format) specifics += '<NameValueList><Name>Format</Name><Value>' + esc(listing.format) + '</Value></NameValueList>';
+    specifics += '<NameValueList><Name>Language</Name><Value>English</Value></NameValueList>';
+    if (listing.genre) specifics += '<NameValueList><Name>Genre</Name><Value>' + esc(listing.genre) + '</Value></NameValueList>';
+    if (listing.publisher) specifics += '<NameValueList><Name>Publisher</Name><Value>' + esc(listing.publisher) + '</Value></NameValueList>';
+    if (listing.publicationYear) specifics += '<NameValueList><Name>Publication Year</Name><Value>' + esc(listing.publicationYear) + '</Value></NameValueList>';
+    if (listing.isbn) specifics += '<NameValueList><Name>ISBN</Name><Value>' + esc(listing.isbn) + '</Value></NameValueList>';
+    if (listing.topic) specifics += '<NameValueList><Name>Topic</Name><Value>' + esc(listing.topic) + '</Value></NameValueList>';
     var xml = '<?xml version="1.0" encoding="utf-8"?><AddItemRequest xmlns="urn:ebay:apis:eBLBaseComponents"><RequesterCredentials><eBayAuthToken>' + token + '</eBayAuthToken></RequesterCredentials><Item>' +
       '<Title>' + esc(listing.title) + '</Title>' +
       '<Description><![CDATA[' + (listing.description || '') + ']]></Description>' +
@@ -359,7 +359,7 @@ app.get('/', function(req, res) {
   h += '      var t=(d.content||[]).map(function(c){return c.text||""}).join("");\n';
   h += '      var s=t.indexOf("{"),e=t.lastIndexOf("}");\n';
   h += '      var p=JSON.parse(t.slice(s,e+1));\n';
-  h += '      item.title=p.title||"Book";item.author=p.author||"";item.bookTitle=p.bookTitle||"";\n';
+  h += '      item.title=p.title||"Book";item.author=p.author||"Unknown";item.bookTitle=p.bookTitle||p.title||"Book";\n';
   h += '      item.format=p.format||"";item.language=p.language||"English";\n';
   h += '      item.desc=p.description||"";item.min=p.minPrice||5;item.max=p.maxPrice||20;\n';
   h += '      item.avg=p.avgPrice||12;item.price=p.suggestedPrice||12;item.status="done"\n';
