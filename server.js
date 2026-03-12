@@ -11,99 +11,48 @@ app.use(function(req, res, next) {
   next();
 });
 
-app.use(express.json());
+app.use(express.json({ limit: '20mb' }));
 
-app.get('/', function(req, res) {
-  res.setHeader('Content-Type', 'text/html');
-  var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FlipAI</title>';
-  html += '<style>*{box-sizing:border-box;margin:0;padding:0}body{background:#0a0a0f;color:#f0f0ff;font-family:monospace;padding:20px}';
-  html += '.logo{font-size:2rem;font-weight:bold;color:#00e5a0;margin-bottom:20px}.section{background:#1a1a26;border:1px solid #2a2a3d;border-radius:12px;padding:20px;margin-bottom:20px}';
-  html += 'label{display:block;font-size:0.75rem;color:#6b6b8a;text-transform:uppercase;margin-bottom:6px}';
-  html += 'input{width:100%;background:#12121a;border:1px solid #2a2a3d;border-radius:8px;padding:10px;color:#f0f0ff;font-family:monospace;margin-bottom:12px;font-size:0.85rem}';
-  html += '.btn{background:#00e5a0;color:#0a0a0f;border:none;border-radius:8px;padding:12px 24px;font-weight:bold;font-size:0.9rem;cursor:pointer;margin-right:10px;margin-bottom:10px}';
-  html += '.btn-purple{background:#7c6bff;color:white}.btn-outline{background:transparent;color:#00e5a0;border:1px solid #00e5a0}';
-  html += '.status{font-size:0.8rem;margin-top:8px;color:#00e5a0}.status.err{color:#ff6b35}';
-  html += '.drop{border:2px dashed #2a2a3d;border-radius:12px;padding:40px;text-align:center;cursor:pointer;margin-bottom:20px;position:relative}';
-  html += '.drop:hover{border-color:#00e5a0}.drop input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer}';
-  html += '.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}';
-  html += '.card{background:#1a1a26;border:1px solid #2a2a3d;border-radius:12px;overflow:hidden}';
-  html += '.card.done{border-color:#00e5a0}.card.error{border-color:#ff6b35}.card.processing{border-color:#7c6bff}';
-  html += '.card img{width:100%;height:180px;object-fit:cover}.card-body{padding:14px}';
-  html += '.price{background:#12121a;border-radius:8px;padding:10px;margin:10px 0;font-size:0.8rem}';
-  html += '.price-big{color:#ffb800;font-size:1.1rem;font-weight:bold}';
-  html += '.edit-field{width:100%;background:#12121a;border:1px solid #2a2a3d;border-radius:6px;padding:8px;color:#f0f0ff;font-family:monospace;font-size:0.8rem;margin-bottom:8px}';
-  html += '.toast-wrap{position:fixed;bottom:20px;right:20px;z-index:9999}';
-  html += '.toast{background:#1a1a26;border:1px solid #00e5a0;border-radius:8px;padding:12px 16px;margin-top:8px;font-size:0.85rem;max-width:280px}';
-  html += '.toast.err{border-color:#ff6b35}</style></head><body>';
-  html += '<div class="logo">FlipAI - Bookslayer Edition</div>';
-  html += '<div class="section"><div style="font-size:0.8rem;color:#00e5a0;text-transform:uppercase;margin-bottom:14px">Step 1 - Enter Keys</div>';
-  html += '<label>Claude API Key</label><input type="password" id="apiKey" placeholder="sk-ant-api03-...">';
-  html += '<label>eBay App ID</label><input type="text" id="ebayKey" placeholder="ARLOWES-Bookslay-PRD-...">';
-  html += '<button class="btn" onclick="verify()">Verify Keys</button>';
-  html += '<div class="status" id="keyStatus"></div></div>';
-  html += '<div class="drop" id="drop"><input type="file" accept="image/*" multiple onchange="handleFiles(this.files)">';
-  html += '<div style="font-size:2rem">📦</div><div style="margin-top:10px;font-weight:bold">Drop photos here or tap to browse</div>';
-  html += '<div style="font-size:0.8rem;color:#6b6b8a;margin-top:6px">Unlimited photos supported</div></div>';
-  html += '<div id="controls" style="display:none;margin-bottom:20px">';
-  html += '<button class="btn" onclick="analyzeAll()">Analyze All</button>';
-  html += '<button class="btn btn-purple" onclick="postAll()">Post All to eBay</button>';
-  html += '<button class="btn btn-outline" onclick="clearAll()">Clear</button></div>';
-  html += '<div class="grid" id="grid"></div>';
-  html += '<div class="toast-wrap" id="toasts"></div>';
-  html += '<script>';
-  html += 'var items=[],busy=false;';
-  html += 'document.getElementById("drop").addEventListener("dragover",function(e){e.preventDefault()});';
-  html += 'document.getElementById("drop").addEventListener("drop",function(e){e.preventDefault();handleFiles(e.dataTransfer.files)});';
-  html += 'window.onload=function(){var k=localStorage.getItem("fa_ck"),e=localStorage.getItem("fa_ek");if(k)document.getElementById("apiKey").value=k;if(e)document.getElementById("ebayKey").value=e;if(k)setStatus("Keys loaded","")};';
-  html += 'function setStatus(m,t){var s=document.getElementById("keyStatus");s.textContent=m;s.className="status"+(t?" "+t:"")}';
-  html += 'function verify(){var k=document.getElementById("apiKey").value.trim(),e=document.getElementById("ebayKey").value.trim();';
-  html += 'if(!k){setStatus("Enter API key","err");return}if(!k.startsWith("sk-ant-")){setStatus("Key must start with sk-ant-","err");return}';
-  html += 'setStatus("Testing...","");';
-  html += 'fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":k,"anthropic-version":"2023-06-01"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:10,messages:[{role:"user",content:"hi"}]})})';
-  html += '.then(function(r){return r.json()}).then(function(d){if(d.error){setStatus("Error: "+d.error.message,"err");return}localStorage.setItem("fa_ck",k);if(e)localStorage.setItem("fa_ek",e);setStatus("Claude API working! Server: "+window.location.origin,"")})';
-  html += '.catch(function(err){setStatus("Failed: "+err.message,"err")})}';
-  html += 'function handleFiles(files){var imgs=Array.from(files).filter(function(f){return f.type.startsWith("image/")||/\\.(jpg|jpeg|png|webp|heic)$/i.test(f.name)});';
-  html += 'if(!imgs.length){toast("No images found","err");return}';
-  html += 'imgs.forEach(function(f){items.push({id:Date.now()+Math.random(),file:f,url:URL.createObjectURL(f),status:"idle",title:"",desc:"",price:10,min:5,max:20,avg:12})});';
-  html += 'render();document.getElementById("controls").style.display="block"}';
-  html += 'function render(){var g=document.getElementById("grid");g.innerHTML="";items.forEach(function(item){var d=document.createElement("div");d.className="card "+item.status;d.id="c"+item.id;d.innerHTML=cardHTML(item);g.appendChild(d)})}';
-  html += 'function cardHTML(item){';
-  html += 'var body="<img src=\\""+item.url+"\\" loading=\\"lazy\\">";';
-  html += 'body+="<div class=\\"card-body\\">";';
-  html += 'if(item.status==="done"){body+="<div class=\\"price\\">Avg: $"+item.avg+" | Range: $"+item.min+"-$"+item.max+"<br><span class=\\"price-big\\">Suggested: $"+item.price+"</span></div>";';
-  html += 'body+="<input class=\\"edit-field\\" value=\\""+esc(item.title)+"\\" onchange=\\"upd("+item.id+",\'title\',this.value)\\">";';
-  html += 'body+="<textarea class=\\"edit-field\\" style=\\"height:60px\\" onchange=\\"upd("+item.id+",\'desc\',this.value)\\">"+esc(item.desc)+"</textarea>";';
-  html += 'body+="<input class=\\"edit-field\\" type=\\"number\\" value=\\""+item.price+"\\" onchange=\\"upd("+item.id+",\'price\',this.value)\\">";';
-  html += 'if(item.ebayId){body+="<a href=\\""+item.ebayUrl+"\\" target=\\"_blank\\" class=\\"btn\\" style=\\"display:block;text-align:center;text-decoration:none;margin-top:8px\\">View on eBay</a>";}';
-  html += 'else{body+="<button class=\\"btn btn-purple\\" style=\\"width:100%;margin-top:8px\\" onclick=\\"postOne("+item.id+")\\">Post to eBay</button>";}}';
-  html += 'else if(item.status==="idle"){body+="<div style=\\"margin-top:10px\\"><button class=\\"btn\\" onclick=\\"analyzeOne("+item.id+")\\">Analyze</button></div>";}';
-  html += 'else if(item.status==="processing"){body+="<div style=\\"margin-top:10px;color:#7c6bff\\">Analyzing...</div>";}';
-  html += 'else if(item.status==="error"){body+="<div style=\\"margin-top:10px\\"><button class=\\"btn\\" onclick=\\"analyzeOne("+item.id+")\\">Retry</button></div>";}';
-  html += 'body+="</div>";return body}';
-  html += 'function esc(s){return(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}';
-  html += 'function upd(id,f,v){var item=items.find(function(i){return i.id==id});if(item)item[f]=v}';
-  html += 'function clearAll(){items=[];render();document.getElementById("controls").style.display="none"}';
-  html += 'function analyzeOne(id){var item=items.find(function(i){return i.id==id});if(!item)return;doAnalyze(item).then(function(){refresh(item)})}';
-  html += 'function analyzeAll(){if(busy)return;var k=localStorage.getItem("fa_ck");if(!k){toast("Verify API key first","err");return}';
-  html += 'busy=true;var q=items.filter(function(i){return i.status==="idle"||i.status==="error"});var idx=0;';
-  html += 'function next(){if(idx>=q.length){busy=false;toast("Done! "+q.length+" analyzed","");return}doAnalyze(q[idx]).then(function(){refresh(q[idx]);idx++;next()})}next()}';
-  html += 'function doAnalyze(item){var k=document.getElementById("apiKey").value.trim()||localStorage.getItem("fa_ck");';
-  html += 'if(!k){item.status="error";return Promise.resolve()}item.status="processing";refresh(item);';
-  html += 'return new Promise(function(resolve){new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(r.result.split(",")[1])};r.onerror=rej;r.readAsDataURL(item.file)})';
-  html += '.then(function(b64){return fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":k,"anthropic-version":"2023-06-01"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:500,messages:[{role:"user",content:[{type:"image",source:{type:"base64",media_type:item.file.type||"image/jpeg",data:b64}},{type:"text",text:"Analyze this book for eBay. Reply ONLY with JSON: {title,description,minPrice,maxPrice,avgPrice,suggestedPrice}"}]}]})})})';
-  html += '.then(function(r){return r.json()}).then(function(d){if(d.error)throw new Error(d.error.message);var t=(d.content||[]).map(function(c){return c.text||""}).join("");var s=t.indexOf("{"),e=t.lastIndexOf("}");var p=JSON.parse(t.slice(s,e+1));item.title=p.title||"Book";item.desc=p.description||"";item.min=p.minPrice||5;item.max=p.maxPrice||20;item.avg=p.avgPrice||12;item.price=p.suggestedPrice||12;item.status="done"})';
-  html += '.catch(function(err){item.status="error";toast(err.message.substring(0,60),"err")}).then(resolve)})}';
-  html += 'function refresh(item){var c=document.getElementById("c"+item.id);if(c){c.className="card "+item.status;c.innerHTML=cardHTML(item)}}';
-  html += 'function postOne(id){var item=items.find(function(i){return i.id==id});if(!item)return;toast("Posting to eBay...","");';
-  html += 'fetch("/post-listing",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({listing:{title:item.title,description:item.desc,price:item.price}})})';
-  html += '.then(function(r){return r.json()}).then(function(d){if(d.success){item.ebayId=d.itemId;item.ebayUrl=d.url;toast("Posted! #"+d.itemId,"");refresh(item)}else{toast("eBay error: "+(d.message||"unknown"),"err")}})';
-  html += '.catch(function(err){toast("Error: "+err.message,"err")})}';
-  html += 'function postAll(){var ready=items.filter(function(i){return i.status==="done"&&!i.ebayId});if(!ready.length){toast("Analyze items first","err");return}var i=0;function next(){if(i>=ready.length)return;postOne(ready[i].id);i++;setTimeout(next,2000)}next()}';
-  html += 'function toast(msg,type){var w=document.getElementById("toasts"),t=document.createElement("div");t.className="toast"+(type?" "+type:"");t.textContent=msg;w.appendChild(t);setTimeout(function(){t.remove()},4000)}';
-  html += '<\/script></body></html>';
-  res.send(html);
+// Proxy Claude API calls to avoid browser CORS issues
+app.post('/analyze', async function(req, res) {
+  var apiKey = req.body.apiKey;
+  var imageData = req.body.imageData;
+  var mimeType = req.body.mimeType || 'image/jpeg';
+  if (!apiKey || !imageData) return res.status(400).json({ error: 'Missing apiKey or imageData' });
+  try {
+    var r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 500,
+        messages: [{ role: 'user', content: [
+          { type: 'image', source: { type: 'base64', media_type: mimeType, data: imageData } },
+          { type: 'text', text: 'Analyze this book for eBay resale. Reply ONLY with raw JSON, no markdown: {"title":"Full Title by Author","description":"2-3 sentence description","minPrice":5,"maxPrice":25,"avgPrice":12,"suggestedPrice":10}' }
+        ]}]
+      })
+    });
+    var data = await r.json();
+    res.json(data);
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Verify API key
+app.post('/verify', async function(req, res) {
+  var apiKey = req.body.apiKey;
+  if (!apiKey) return res.status(400).json({ error: 'Missing apiKey' });
+  try {
+    var r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 10, messages: [{ role: 'user', content: 'hi' }] })
+    });
+    var data = await r.json();
+    res.json(data);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Post to eBay
 app.post('/post-listing', async function(req, res) {
   var listing = req.body.listing;
   if (!listing) return res.status(400).json({ success: false, message: 'No listing data' });
@@ -127,4 +76,127 @@ app.post('/post-listing', async function(req, res) {
 });
 
 function esc(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+app.get('/', function(req, res) {
+  res.setHeader('Content-Type', 'text/html');
+  var h = '';
+  h += '<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FlipAI</title>';
+  h += '<style>*{box-sizing:border-box;margin:0;padding:0}body{background:#0a0a0f;color:#f0f0ff;font-family:monospace;padding:24px;max-width:1100px;margin:0 auto}';
+  h += 'h1{font-size:1.8rem;font-weight:800;color:#00e5a0;margin-bottom:24px}';
+  h += '.section{background:#1a1a26;border:1px solid #2a2a3d;border-radius:12px;padding:20px;margin-bottom:20px}';
+  h += '.section h2{font-size:0.75rem;color:#00e5a0;text-transform:uppercase;letter-spacing:.1em;margin-bottom:14px}';
+  h += 'label{display:block;font-size:0.7rem;color:#6b6b8a;text-transform:uppercase;margin-bottom:5px}';
+  h += 'input{width:100%;background:#12121a;border:1px solid #2a2a3d;border-radius:8px;padding:10px;color:#f0f0ff;font-family:monospace;margin-bottom:12px;font-size:0.85rem}';
+  h += '.btn{background:#00e5a0;color:#0a0a0f;border:none;border-radius:8px;padding:11px 22px;font-weight:bold;font-size:0.85rem;cursor:pointer;margin-right:8px;margin-bottom:8px}';
+  h += '.btn:hover{filter:brightness(1.1)}.btn:disabled{opacity:.4;cursor:not-allowed}';
+  h += '.btn-purple{background:#7c6bff;color:white}.btn-outline{background:transparent;color:#00e5a0;border:1px solid #00e5a0}';
+  h += '.status{font-size:0.8rem;margin-top:8px;color:#00e5a0;min-height:18px}.status.err{color:#ff6b35}';
+  h += '.drop{border:2px dashed #2a2a3d;border-radius:12px;padding:40px;text-align:center;cursor:pointer;position:relative;background:#12121a;transition:border-color .2s}';
+  h += '.drop:hover,.drop.over{border-color:#00e5a0}.drop input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer}';
+  h += '.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;margin-top:20px}';
+  h += '.card{background:#1a1a26;border:1px solid #2a2a3d;border-radius:12px;overflow:hidden}';
+  h += '.card.done{border-color:#00e5a0}.card.error{border-color:#ff6b35}.card.processing{border-color:#7c6bff}';
+  h += '.card img{width:100%;height:170px;object-fit:cover;display:block}';
+  h += '.card-body{padding:14px}.card-title{font-weight:bold;font-size:0.9rem;margin-bottom:10px;line-height:1.3}';
+  h += '.price-box{background:#12121a;border-radius:8px;padding:10px;margin-bottom:10px;font-size:0.78rem}';
+  h += '.price-big{color:#ffb800;font-size:1rem;font-weight:bold}';
+  h += '.ef{width:100%;background:#12121a;border:1px solid #2a2a3d;border-radius:6px;padding:8px;color:#f0f0ff;font-family:monospace;font-size:0.78rem;margin-bottom:8px}';
+  h += '.actions{display:flex;gap:8px;flex-wrap:wrap}.actions .btn{flex:1;padding:8px;font-size:0.78rem;margin:0}';
+  h += '.toast-wrap{position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px}';
+  h += '.toast{background:#1a1a26;border:1px solid #00e5a0;border-radius:8px;padding:12px 16px;font-size:0.82rem;max-width:280px}';
+  h += '.toast.err{border-color:#ff6b35}.prog{background:#12121a;border-radius:100px;height:4px;margin:10px 0;overflow:hidden}';
+  h += '.prog-bar{height:100%;background:linear-gradient(90deg,#00e5a0,#7c6bff);border-radius:100px;transition:width .3s}';
+  h += '</style></head><body>';
+  h += '<h1>FlipAI - Bookslayer Edition</h1>';
+  h += '<div class="section"><h2>Step 1 - Enter Keys</h2>';
+  h += '<label>Claude API Key</label><input type="password" id="apiKey" placeholder="sk-ant-api03-...">';
+  h += '<label>eBay App ID</label><input type="text" id="ebayKey" placeholder="ARLOWES-Bookslay-PRD-...">';
+  h += '<button class="btn" onclick="verify()">Verify Keys</button>';
+  h += '<div class="status" id="keyStatus"></div></div>';
+  h += '<div class="drop" id="drop"><input type="file" accept="image/*" multiple onchange="handleFiles(this.files)">';
+  h += '<div style="font-size:2rem">📦</div><div style="margin-top:10px;font-size:1.1rem;font-weight:bold">Drop book photos here or click to browse</div>';
+  h += '<div style="font-size:0.8rem;color:#6b6b8a;margin-top:6px">Supports unlimited photos - JPG, PNG, HEIC</div></div>';
+  h += '<div id="controls" style="display:none;margin-top:16px">';
+  h += '<button class="btn" onclick="analyzeAll()">Analyze All</button>';
+  h += '<button class="btn btn-purple" onclick="postAll()">Post All to eBay</button>';
+  h += '<button class="btn btn-outline" onclick="clearAll()">Clear All</button>';
+  h += '<div class="prog" id="progWrap" style="display:none"><div class="prog-bar" id="progBar" style="width:0%"></div></div>';
+  h += '<div style="font-size:0.75rem;color:#6b6b8a;margin-top:4px" id="progLbl"></div></div>';
+  h += '<div class="grid" id="grid"></div>';
+  h += '<div class="toast-wrap" id="toasts"></div>';
+  h += '<script>';
+  h += 'var items=[],busy=false;';
+  h += 'var drop=document.getElementById("drop");';
+  h += 'drop.addEventListener("dragover",function(e){e.preventDefault();drop.classList.add("over")});';
+  h += 'drop.addEventListener("dragleave",function(){drop.classList.remove("over")});';
+  h += 'drop.addEventListener("drop",function(e){e.preventDefault();drop.classList.remove("over");handleFiles(e.dataTransfer.files)});';
+  h += 'window.onload=function(){var k=localStorage.getItem("fa_ck"),e=localStorage.getItem("fa_ek");if(k)document.getElementById("apiKey").value=k;if(e)document.getElementById("ebayKey").value=e;if(k)setStatus("Keys loaded","")};';
+  h += 'function setStatus(m,t){var s=document.getElementById("keyStatus");s.textContent=m;s.className="status"+(t?" "+t:"")}';
+  h += 'function verify(){';
+  h += 'var k=document.getElementById("apiKey").value.trim();';
+  h += 'var e=document.getElementById("ebayKey").value.trim();';
+  h += 'if(!k){setStatus("Enter your Claude API key","err");return}';
+  h += 'setStatus("Testing...","");';
+  h += 'fetch("/verify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apiKey:k})})';
+  h += '.then(function(r){return r.json()}).then(function(d){';
+  h += 'if(d.error){setStatus("Error: "+d.error,"err");return}';
+  h += 'localStorage.setItem("fa_ck",k);if(e)localStorage.setItem("fa_ek",e);';
+  h += 'setStatus("Claude API working! Ready to analyze books","")})';
+  h += '.catch(function(err){setStatus("Failed: "+err.message,"err")})}';
+  h += 'function handleFiles(files){';
+  h += 'var imgs=Array.from(files).filter(function(f){return f.type.startsWith("image/")||/\\.(jpg|jpeg|png|webp|heic)$/i.test(f.name)});';
+  h += 'if(!imgs.length){toast("No image files found","err");return}';
+  h += 'imgs.forEach(function(f){items.push({id:Date.now()+Math.random(),file:f,url:URL.createObjectURL(f),status:"idle",title:"",desc:"",price:10,min:5,max:20,avg:12})});';
+  h += 'render();document.getElementById("controls").style.display="block";toast(imgs.length+" photos loaded!","")}';
+  h += 'function render(){var g=document.getElementById("grid");g.innerHTML="";items.forEach(function(item){var d=document.createElement("div");d.className="card "+item.status;d.id="c"+item.id;d.innerHTML=cardHTML(item);g.appendChild(d)})}';
+  h += 'function cardHTML(item){';
+  h += 'var b="<img src=\'"+item.url+"\' loading=\'lazy\'><div class=\'card-body\'>";';
+  h += 'if(item.status==="processing")b+="<div style=\'color:#7c6bff;padding:10px 0\'>Analyzing...</div>";';
+  h += 'else if(item.status==="done"){';
+  h += 'b+="<div class=\'card-title\'>"+esc(item.title)+"</div>";';
+  h += 'b+="<div class=\'price-box\'>Avg $"+item.avg+" | Range $"+item.min+"-$"+item.max+"<br><span class=\'price-big\'>List at: $"+item.price+"</span></div>";';
+  h += 'b+="<input class=\'ef\' value=\'"+esc(item.title)+"\' onchange=\'upd("+item.id+",\\\"title\\\",this.value)\'>";';
+  h += 'b+="<textarea class=\'ef\' style=\'height:55px\' onchange=\'upd("+item.id+",\\\"desc\\\",this.value)\'>"+esc(item.desc)+"</textarea>";';
+  h += 'b+="<input class=\'ef\' type=\'number\' value=\'"+item.price+"\' onchange=\'upd("+item.id+",\\\"price\\\",this.value)\'>";';
+  h += 'if(item.ebayId)b+="<a href=\'"+item.ebayUrl+"\' target=\'_blank\' class=\'btn\' style=\'display:block;text-align:center;text-decoration:none;margin-top:8px\'>View on eBay</a>";';
+  h += 'else b+="<div class=\'actions\'><button class=\'btn btn-purple\' onclick=\'postOne("+item.id+")\'>Post to eBay</button></div>";}';
+  h += 'else if(item.status==="error")b+="<div style=\'color:#ff6b35;margin-top:10px;font-size:.8rem\'>Failed</div><div class=\'actions\'><button class=\'btn\' onclick=\'analyzeOne("+item.id+")\'>Retry</button></div>";';
+  h += 'else b+="<div style=\'color:#6b6b8a;font-size:.8rem;margin-top:10px\'>"+item.file.name+"</div><div class=\'actions\'><button class=\'btn\' onclick=\'analyzeOne("+item.id+")\'>Analyze</button></div>";';
+  h += 'b+="</div>";return b}';
+  h += 'function esc(s){return(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}';
+  h += 'function upd(id,f,v){var i=items.find(function(x){return x.id==id});if(i)i[f]=v}';
+  h += 'function clearAll(){items=[];render();document.getElementById("controls").style.display="none"}';
+  h += 'function analyzeOne(id){var item=items.find(function(i){return i.id==id});if(item)doAnalyze(item).then(function(){refresh(item)})}';
+  h += 'function analyzeAll(){if(busy)return;var k=localStorage.getItem("fa_ck");if(!k){toast("Verify API key first","err");return}';
+  h += 'busy=true;var q=items.filter(function(i){return i.status==="idle"||i.status==="error"});if(!q.length){busy=false;toast("All done!","");return}';
+  h += 'var idx=0;document.getElementById("progWrap").style.display="block";';
+  h += 'function next(){if(idx>=q.length){busy=false;document.getElementById("progWrap").style.display="none";toast("Done! "+q.length+" analyzed","");return}';
+  h += 'var item=q[idx];document.getElementById("progBar").style.width=Math.round(idx/q.length*100)+"%";';
+  h += 'document.getElementById("progLbl").textContent="Analyzing "+item.file.name+" ("+idx+"/"+q.length+")";';
+  h += 'doAnalyze(item).then(function(){refresh(item);idx++;next()})}next()}';
+  h += 'function doAnalyze(item){var k=localStorage.getItem("fa_ck");if(!k){item.status="error";return Promise.resolve()}';
+  h += 'item.status="processing";refresh(item);';
+  h += 'return new Promise(function(resolve){';
+  h += 'var reader=new FileReader();reader.onload=function(){';
+  h += 'var b64=reader.result.split(",")[1];';
+  h += 'fetch("/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apiKey:k,imageData:b64,mimeType:item.file.type||"image/jpeg"})})';
+  h += '.then(function(r){return r.json()}).then(function(d){';
+  h += 'if(d.error)throw new Error(d.error);';
+  h += 'var t=(d.content||[]).map(function(c){return c.text||""}).join("");';
+  h += 'var s=t.indexOf("{"),e=t.lastIndexOf("}");var p=JSON.parse(t.slice(s,e+1));';
+  h += 'item.title=p.title||"Book";item.desc=p.description||"";item.min=p.minPrice||5;item.max=p.maxPrice||20;item.avg=p.avgPrice||12;item.price=p.suggestedPrice||12;item.status="done"})';
+  h += '.catch(function(err){item.status="error";toast(err.message.substring(0,60),"err")}).then(resolve)};';
+  h += 'reader.readAsDataURL(item.file)})}';
+  h += 'function refresh(item){var c=document.getElementById("c"+item.id);if(c){c.className="card "+item.status;c.innerHTML=cardHTML(item)}}';
+  h += 'function postOne(id){var item=items.find(function(i){return i.id==id});if(!item)return;toast("Posting to eBay...","");';
+  h += 'fetch("/post-listing",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({listing:{title:item.title,description:item.desc,price:item.price}})})';
+  h += '.then(function(r){return r.json()}).then(function(d){if(d.success){item.ebayId=d.itemId;item.ebayUrl=d.url;toast("Posted! eBay #"+d.itemId,"");refresh(item)}else{toast("eBay: "+(d.message||"error"),"err")}})';
+  h += '.catch(function(err){toast("Error: "+err.message,"err")})}';
+  h += 'function postAll(){var ready=items.filter(function(i){return i.status==="done"&&!i.ebayId});if(!ready.length){toast("Analyze items first","err");return}';
+  h += 'toast("Posting "+ready.length+" items...","");var i=0;function next(){if(i>=ready.length)return;postOne(ready[i].id);i++;setTimeout(next,2000)}next()}';
+  h += 'function toast(msg,type){var w=document.getElementById("toasts"),t=document.createElement("div");t.className="toast"+(type?" "+type:"");t.textContent=msg;w.appendChild(t);setTimeout(function(){t.remove()},4000)}';
+  h += '<\/script></body></html>';
+  res.send(h);
+});
+
 app.listen(PORT, function() { console.log('FlipAI running on port ' + PORT); });
