@@ -267,7 +267,7 @@ app.get('/', function(req, res) {
 
   h += '<script>\n';
   h += 'var items=[],busy=false;\n';
-  h += 'var GAP_SECONDS=30;\n';
+  h += 'var GAP_SECONDS=7;\n';
   h += 'var drop=document.getElementById("drop");\n';
   h += 'drop.addEventListener("dragover",function(e){e.preventDefault();drop.classList.add("over")});\n';
   h += 'drop.addEventListener("dragleave",function(){drop.classList.remove("over")});\n';
@@ -306,7 +306,7 @@ app.get('/', function(req, res) {
   h += '  if(cur.length)groups.push(cur);\n';
   h += '  groups.forEach(function(g){items.push({id:Date.now()+Math.random(),files:g,urls:g.map(function(f){return URL.createObjectURL(f)}),mainIdx:0,status:"idle",title:"",author:"",bookTitle:"",format:"",language:"English",desc:"",genre:"",publisher:"",publicationYear:"",isbn:"",topic:"",condition:"Good",weightLbs:"",weightOz:"",location:"",firstEdition:false,firstEditionPremium:false,price:10,min:5,max:20,avg:12,conditionId:"3000",weightLbs:"",weightOz:""})});\n';
   h += '  document.getElementById("statsWrap").style.display="block";\n';
-  h += '  document.getElementById("gapInfo").textContent="Grouped "+imgs.length+" photos into "+groups.length+" books ("+GAP_SECONDS+"s gap rule)";\n';
+  h += '  document.getElementById("gapInfo").textContent="Grouped "+imgs.length+" photos into "+groups.length+" books (note card + "+GAP_SECONDS+"s gap)";\n';
   h += '  render();updateStats();toast("Grouped "+imgs.length+" photos into "+groups.length+" books!","")\n';
   h += '}\n';
 
