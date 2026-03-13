@@ -69,6 +69,37 @@ async function uploadPhotoToEbay(base64Data, mimeType, appId, token) {
   throw new Error('Photo upload failed: ' + text.substring(0, 300));
 }
 
+app.post('/classify-photos', async function(req, res) {
+  var apiKey = req.body.apiKey;
+  var photos = req.body.photos;
+  if (!apiKey || !photos || !photos.length) return res.status(400).json({ error: 'Missing data' });
+  try {
+    var content = [];
+    photos.forEach(function(p, i) {
+      content.push({ type: 'image', source: { type: 'base64', media_type: p.mimeType || 'image/jpeg', data: p.data } });
+      content.push({ type: 'text', text: 'Photo ' + i + ':' });
+    });
+    content.push({ type: 'text', text: 'Classify each photo above. For each photo reply with ONLY its index and label separated by comma, one per line. Labels: "cover" (book front cover — has title/author text, colorful design), "notecard" (handwritten note on paper/card — has handwriting, no book design), "page" (anything else — spine, back cover, inside pages). Example response: 0,cover\n1,page\n2,page\n3,notecard\n4,cover. Reply ONLY with the index,label lines — no other text.' });
+    var r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 500, messages: [{ role: 'user', content: content }] })
+    });
+    var d = await r.json();
+    var text = (d.content || []).map(function(c) { return c.text || ''; }).join('');
+    var labels = new Array(photos.length).fill('page');
+    text.split('\n').forEach(function(line) {
+      var parts = line.trim().split(',');
+      if (parts.length === 2) {
+        var idx = parseInt(parts[0]);
+        var label = parts[1].trim().toLowerCase();
+        if (!isNaN(idx) && idx >= 0 && idx < labels.length) labels[idx] = label;
+      }
+    });
+    res.json({ labels: labels });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/post-listing', async function(req, res) {
   var listing = req.body.listing;
   var images = req.body.images || [];
