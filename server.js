@@ -61,28 +61,69 @@ app.post('/classify-photos', async function(req, res) {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── ANALYZE BOOK ─────────────────────────────────────────────────────────────
+// ─── ANALYZE BOOK (Two-stage: Haiku reads photos → Sonnet prices) ────────────
 app.post('/analyze', async function(req, res) {
   var apiKey = req.body.apiKey;
   var images = req.body.images;
   if (!apiKey || !images || !images.length) return res.status(400).json({ error: 'Missing apiKey or images' });
   try {
-    var content = [];
+    // STAGE 1: Haiku reads all photos and extracts book details (fast + cheap)
+    var visionContent = [];
     images.forEach(function(img) {
-      content.push({ type: 'image', source: { type: 'base64', media_type: img.mimeType || 'image/jpeg', data: img.data } });
+      visionContent.push({ type: 'image', source: { type: 'base64', media_type: img.mimeType || 'image/jpeg', data: img.data } });
     });
-    content.push({ type: 'text', text: 'Analyze these book photos for eBay listing. STEP 1 - FIND AUTHOR (critical): Scan EVERY single photo for the author name. Check: (a) front cover - author is usually above or below the title, (b) spine - author printed vertically, (c) inside title page - By [Name] or name centered on page, (d) back cover - author bio, (e) copyright page - Copyright [year] by [Name]. Author is in at least one photo in 99% of books. Only leave empty if truly invisible in all photos. STEP 2 - FIND TITLE: Cover, spine, title page. STEP 3 - EDITION: Copyright page for First Edition, First Published, 1st Edition, or number line ending in 1 like 10 9 8 7 6 5 4 3 2 1. STEP 4 - NOTE CARD: Last photo may be handwritten note card - read for condition, weight lbs/oz, location/shelf code. Never upload to eBay. STEP 5 - PRICING: Use web_search. Search eBay SOLD for title author used first. If 1st edition search title author first edition sold eBay separately. Also check Google Books, AbeBooks, Alibris. HAPPY STEAL: collect sold prices, strip top/bottom 10%, median = TRUE value. suggestedPrice = 85% of TRUE rounded to .95 or .99. minPrice = 70%, maxPrice = 110%, avgPrice = TRUE. 1st edition: only 1st edition comps, firstEditionPremium true. Reply ONLY raw JSON no markdown: {"title":"Full Title","author":"Author Full Name - check every photo before giving up","bookTitle":"Title Only","format":"Hardcover or Paperback or Trade Paperback","language":"English","description":"2-3 sentences about book, no weight, start with FIRST EDITION if applicable","genre":"genre or empty","publisher":"publisher or empty","publicationYear":"4-digit year or empty","isbn":"ISBN or empty","topic":"subject or empty","condition":"from note card or guessed","weightLbs":"lbs or empty","weightOz":"oz or empty","location":"shelf code or empty","firstEdition":false,"firstEditionPremium":false,"minPrice":5,"maxPrice":25,"avgPrice":12,"suggestedPrice":10}' });
-    var r = await fetch('https://api.anthropic.com/v1/messages', {
+    visionContent.push({ type: 'text', text: 'Extract book details from these photos. Check EVERY photo — cover, spine, inside title page, copyright page, back cover, note card. AUTHOR: look on cover (above/below title), spine (vertical text), inside title page (centered name), back cover (bio), copyright page (Copyright by [Name]). EDITION: copyright page for First Edition, First Published, 1st Edition, or number line ending in 1. NOTE CARD: last photo may be handwritten with condition, weight lbs/oz, location/shelf code. Reply ONLY raw JSON: {"title":"Full Title","author":"Author Name","format":"Hardcover or Paperback or Trade Paperback","genre":"genre","publisher":"publisher","publicationYear":"4-digit year","isbn":"ISBN or empty","topic":"subject","condition":"condition","weightLbs":"lbs or empty","weightOz":"oz or empty","location":"shelf code or empty","firstEdition":false,"description":"1-2 sentence plot summary only"}' });
+
+    var stage1 = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 600, messages: [{ role: 'user', content: visionContent }] })
+    });
+    var s1 = await stage1.json();
+    var s1text = (s1.content || []).map(function(c){ return c.text || ''; }).join('');
+    var s1start = s1text.indexOf('{'), s1end = s1text.lastIndexOf('}');
+    var bookData = {};
+    if (s1start >= 0 && s1end >= 0) {
+      try { bookData = JSON.parse(s1text.slice(s1start, s1end + 1)); } catch(e) {}
+    }
+
+    // STAGE 2: Sonnet does ONLY pricing via web search — no images needed
+    var title = bookData.title || 'Unknown Book';
+    var author = bookData.author || '';
+    var isFirst = bookData.firstEdition || false;
+    var pricingPrompt = 'Price this book for eBay resale using web_search. ' +
+      'Book: "' + title + '" by ' + (author || 'Unknown') + '. ' +
+      (isFirst ? 'THIS IS A 1ST EDITION — search specifically for first edition sold prices, they are 2x-10x higher. ' : '') +
+      'Search order: (1) eBay SOLD listings "' + title + ' ' + author + (isFirst ? ' first edition' : '') + ' used sold" — strongest signal. ' +
+      '(2) AbeBooks, Alibris for comparison. (3) Google Books for edition verification. ' +
+      'HAPPY STEAL FORMULA: collect sold prices, strip top/bottom 10% outliers, median = TRUE value. ' +
+      'suggestedPrice = 85% of TRUE value rounded DOWN to .95 or .99 ending. ' +
+      'minPrice = 70% of TRUE. maxPrice = 110% of TRUE. avgPrice = TRUE median. ' +
+      (isFirst ? 'Set firstEditionPremium true. ' : '') +
+      'Reply ONLY raw JSON: {"suggestedPrice":10.95,"minPrice":7,"maxPrice":15,"avgPrice":12,"firstEditionPremium":false}';
+
+    var stage2 = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 1200,
+        max_tokens: 400,
         tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-        messages: [{ role: 'user', content: content }]
+        messages: [{ role: 'user', content: pricingPrompt }]
       })
     });
-    res.json(await r.json());
+    var s2 = await stage2.json();
+    var s2text = (s2.content || []).filter(function(c){ return c.type === 'text'; }).map(function(c){ return c.text || ''; }).join('');
+    var s2start = s2text.indexOf('{'), s2end = s2text.lastIndexOf('}');
+    var priceData = { suggestedPrice: 9.95, minPrice: 5, maxPrice: 20, avgPrice: 12, firstEditionPremium: false };
+    if (s2start >= 0 && s2end >= 0) {
+      try { priceData = Object.assign(priceData, JSON.parse(s2text.slice(s2start, s2end + 1))); } catch(e) {}
+    }
+
+    // Merge both stages into final response
+    var merged = Object.assign({}, bookData, priceData);
+    res.json({ content: [{ type: 'text', text: JSON.stringify(merged) }] });
+
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -175,7 +216,14 @@ app.post('/post-listing', async function(req, res) {
     var xml = '<?xml version="1.0" encoding="utf-8"?><AddItemRequest xmlns="urn:ebay:apis:eBLBaseComponents"><RequesterCredentials><eBayAuthToken>' + token + '</eBayAuthToken></RequesterCredentials><Item>' +
       '<Title>' + esc((listing.title || 'Book').substring(0, 80)) + '</Title>' +
       '<Description><![CDATA[' + fullDescription + ']]></Description>' +
-      '<PrimaryCategory><CategoryID>267</CategoryID></PrimaryCategory>' +
+      '<PrimaryCategory><CategoryID>' + (function(){
+        var fmt=(listing.format||'').toLowerCase();
+        var gen=(listing.genre||'').toLowerCase();
+        if(gen.includes('child')) return '11721';      // Children's Books
+        if(gen.includes('comic')||gen.includes('manga')) return '259104'; // Comics
+        if(fmt.includes('hard')) return '29223';       // Hardcover Books
+        return '29240';                                 // Paperback Books (default)
+      })() + '</CategoryID></PrimaryCategory>' +
       '<StartPrice>' + (parseFloat(listing.price) || 9.99).toFixed(2) + '</StartPrice>' +
       '<Quantity>1</Quantity>' +
       '<ListingType>FixedPriceItem</ListingType>' +
