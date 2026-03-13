@@ -196,6 +196,7 @@ app.post('/post-listing', async function(req, res) {
           '</ReturnPolicy>' +
           '<ConditionID>' + conditionId + '</ConditionID>' +
           packageXml +
+          '<Language>English</Language>' +
           '<Site>US</Site>' +
         '</Item>' +
       '</AddItemRequest>';
@@ -216,9 +217,10 @@ app.post('/post-listing', async function(req, res) {
       var match = text.match(/<ItemID>(\d+)<\/ItemID>/);
       res.json({ success: true, itemId: match ? match[1] : 'unknown', url: 'https://www.ebay.com/itm/' + (match ? match[1] : '') });
     } else {
-      var errMatch = text.match(/<LongMessage>(.*?)<\/LongMessage>/);
-      console.log('eBay AddItem failed:', text.substring(0, 600));
-      res.status(400).json({ success: false, message: errMatch ? errMatch[1] : 'eBay error', raw: text.substring(0, 400) });
+      var errMatches = text.match(/<LongMessage>(.*?)<\/LongMessage>/g) || [];
+      var allErrors = errMatches.map(function(m){ return m.replace(/<\/?LongMessage>/g,''); }).join(' | ');
+      console.log('eBay AddItem failed:', text.substring(0, 800));
+      res.status(400).json({ success: false, message: allErrors || 'eBay error', raw: text.substring(0, 600) });
     }
   } catch(e) {
     console.log('post-listing error:', e.message);
@@ -575,6 +577,107 @@ app.get('/', function(req, res) {
 
   h += '<\/script></body></html>';
   res.send(h);
+});
+
+
+// DEBUG - returns the XML that would be sent to eBay (no actual posting)
+app.post('/debug-xml', async function(req, res) {
+  var listing = req.body.listing || {};
+  var conditionMap = {
+    'new': '1000', 'like new': '2750', 'very good': '2750',
+    'good': '3000', 'acceptable': '4000', 'poor': '7000',
+    'for parts': '7000', 'for parts/not working': '7000'
+  };
+  var conditionId = conditionMap[(listing.condition || 'good').toLowerCase()] || '3000';
+  var categoryMap = {
+    'fiction': '261186', 'nonfiction': '11232', 'non-fiction': '11232',
+    'children': '11721', "children's": '11721', 'comics': '259104', 'graphic novel': '259104'
+  };
+  var categoryId = categoryMap[(listing.genre || '').toLowerCase()] || '261186';
+
+  var specifics = '';
+  specifics += '<NameValueList><Name>Author</Name><Value>' + esc(listing.author || 'Unknown') + '</Value></NameValueList>';
+  if (listing.bookTitle) specifics += '<NameValueList><Name>Book Title</Name><Value>' + esc(listing.bookTitle) + '</Value></NameValueList>';
+  if (listing.format)    specifics += '<NameValueList><Name>Format</Name><Value>' + esc(listing.format) + '</Value></NameValueList>';
+  if (listing.genre)     specifics += '<NameValueList><Name>Genre</Name><Value>' + esc(listing.genre) + '</Value></NameValueList>';
+
+  var xml = '<?xml version="1.0" encoding="utf-8"?>' +
+    '<AddItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">' +
+    '<RequesterCredentials><eBayAuthToken>TOKEN_REDACTED</eBayAuthToken></RequesterCredentials>' +
+    '<Item>' +
+    '<Title>' + esc(listing.title || 'Test') + '</Title>' +
+    '<ItemSpecifics>' + specifics + '</ItemSpecifics>' +
+    '<PrimaryCategory><CategoryID>' + categoryId + '</CategoryID></PrimaryCategory>' +
+    '</Item>' +
+    '</AddItemRequest>';
+
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(xml);
+});
+
+
+// RAW TEST — posts minimal XML to eBay and returns the full raw response
+app.get('/rawtest', async function(req, res) {
+  var token = process.env.EBAY_USER_TOKEN;
+  var appId = process.env.EBAY_APP_ID;
+  var postal = process.env.POSTAL_CODE || '14701';
+  if (!token) return res.send('No EBAY_USER_TOKEN set');
+
+  var xml = '<?xml version="1.0" encoding="utf-8"?>' +
+    '<AddItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">' +
+    '<RequesterCredentials><eBayAuthToken>' + token + '</eBayAuthToken></RequesterCredentials>' +
+    '<Item>' +
+    '<Title>Test Book Listing FlipAI</Title>' +
+    '<Description><![CDATA[Test description]]></Description>' +
+    '<ItemSpecifics>' +
+    '<NameValueList><Name>Author</Name><Value>Test Author</Value></NameValueList>' +
+    '<NameValueList><Name>Language</Name><Value>English</Value></NameValueList>' +
+    '<NameValueList><Name>Format</Name><Value>Paperback</Value></NameValueList>' +
+    '</ItemSpecifics>' +
+    '<PrimaryCategory><CategoryID>261186</CategoryID></PrimaryCategory>' +
+    '<StartPrice>9.99</StartPrice>' +
+    '<Country>US</Country><Currency>USD</Currency>' +
+    '<DispatchTimeMax>3</DispatchTimeMax>' +
+    '<ListingDuration>GTC</ListingDuration>' +
+    '<ListingType>FixedPriceItem</ListingType>' +
+    '<PostalCode>' + postal + '</PostalCode>' +
+    '<Quantity>1</Quantity>' +
+    '<ShippingDetails>' +
+    '<ShippingType>Flat</ShippingType>' +
+    '<ShippingServiceOptions>' +
+    '<ShippingServicePriority>1</ShippingServicePriority>' +
+    '<ShippingService>USPSMedia</ShippingService>' +
+    '<ShippingServiceCost>3.99</ShippingServiceCost>' +
+    '</ShippingServiceOptions>' +
+    '</ShippingDetails>' +
+    '<ReturnPolicy>' +
+    '<ReturnsAcceptedOption>ReturnsAccepted</ReturnsAcceptedOption>' +
+    '<ReturnsWithinOption>Days_30</ReturnsWithinOption>' +
+    '<ShippingCostPaidByOption>Buyer</ShippingCostPaidByOption>' +
+    '</ReturnPolicy>' +
+    '<ConditionID>3000</ConditionID>' +
+    '<Site>US</Site>' +
+    '</Item>' +
+    '</AddItemRequest>';
+
+  try {
+    var r = await fetch('https://api.ebay.com/ws/api.dll', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/xml',
+        'X-EBAY-API-SITEID': '0',
+        'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
+        'X-EBAY-API-CALL-NAME': 'AddItem',
+        'X-EBAY-API-APP-NAME': appId || ''
+      },
+      body: xml
+    });
+    var text = await r.text();
+    res.setHeader('Content-Type', 'text/plain');
+    res.send('=== REQUEST XML ===\n' + xml + '\n\n=== EBAY RESPONSE ===\n' + text);
+  } catch(e) {
+    res.send('Error: ' + e.message);
+  }
 });
 
 app.listen(PORT, function() {
