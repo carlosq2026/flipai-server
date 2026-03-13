@@ -77,7 +77,7 @@ app.post('/analyze', async function(req, res) {
     var stage1 = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 600, messages: [{ role: 'user', content: visionContent }] })
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 400, messages: [{ role: 'user', content: visionContent }] })
     });
     var s1 = await stage1.json();
     var s1text = (s1.content || []).map(function(c){ return c.text || ''; }).join('');
@@ -173,14 +173,14 @@ app.post('/post-listing', async function(req, res) {
   if (!appId) return res.status(400).json({ error: 'Missing EBAY_APP_ID in Railway environment' });
 
   try {
-    // Upload photos (strip last if it's a note card — already handled client side)
-    var photoUrls = [];
-    for (var i = 0; i < Math.min(images.length, 12); i++) {
-      try {
-        var url = await uploadPhotoToEbay(images[i].data, images[i].mimeType, appId, token);
-        photoUrls.push(url);
-      } catch(e) { console.log('Photo upload error:', e.message); }
-    }
+    // Upload all photos to eBay in PARALLEL — massive speed improvement
+    var uploadSlots = images.slice(0, 12);
+    var photoUrls = (await Promise.all(
+      uploadSlots.map(function(img) {
+        return uploadPhotoToEbay(img.data, img.mimeType, appId, token)
+          .catch(function(e) { console.log('Photo upload error:', e.message); return null; });
+      })
+    )).filter(Boolean);
 
     function esc(s) { return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
@@ -633,8 +633,18 @@ app.get('/', function(req, res) {
   h += '  if(!k){item.status="error";return Promise.resolve()}\n';
   h += '  item.status="processing";refresh(item);\n';
   h += '  // Strip last file if it is a note card (already grouped, just read it)\n';
+  h += '  // Downscale to 800px for analysis — faster upload, Haiku still reads everything\n';
   h += '  var filesToRead=item.files;\n';
-  h += '  var promises=filesToRead.map(function(file){return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res({data:r.result.split(",")[1],mimeType:file.type||"image/jpeg"})};r.onerror=rej;r.readAsDataURL(file)})});\n';
+  h += '  var promises=filesToRead.map(function(file){return new Promise(function(res,rej){\n';
+  h += '    var fr=new FileReader();fr.onload=function(){\n';
+  h += '      var img=new Image();img.onload=function(){\n';
+  h += '        var MAX=800;var scale=Math.min(MAX/img.width,MAX/img.height,1);\n';
+  h += '        var c=document.createElement("canvas");c.width=Math.round(img.width*scale);c.height=Math.round(img.height*scale);\n';
+  h += '        c.getContext("2d").drawImage(img,0,0,c.width,c.height);\n';
+  h += '        res({data:c.toDataURL("image/jpeg",0.82).split(",")[1],mimeType:"image/jpeg"});\n';
+  h += '      };img.src=fr.result;\n';
+  h += '    };fr.onerror=rej;fr.readAsDataURL(file);\n';
+  h += '  })});\n';
   h += '  return Promise.all(promises).then(function(images){\n';
   h += '    return fetch("/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apiKey:k,images:images})})\n';
   h += '    .then(function(r){return r.json()})\n';
@@ -699,9 +709,8 @@ app.get('/', function(req, res) {
   h += 'function doPost(item){\n';
   h += '  item.status="posting";refresh(item);\n';
   h += '  var mi=item.mainIdx||0;\n';
-  h += '  // Exclude last file (note card) from eBay upload\n';
-  h += '  var ebayFiles=item.files.slice(0,-1);\n';
-  h += '  if(ebayFiles.length===0)ebayFiles=item.files;\n';
+  h += '  // Exclude last file (note card) from eBay upload, but keep it if only 1 photo\n';
+  h += '  var ebayFiles=item.files.length>1?item.files.slice(0,-1):item.files;\n';
   h += '  var orderedFiles=[ebayFiles[mi]].concat(ebayFiles.filter(function(_,i){return i!==mi}));\n';
   h += '  var promises=orderedFiles.map(function(f){return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res({data:r.result.split(",")[1],mimeType:f.type||"image/jpeg"})};r.onerror=rej;r.readAsDataURL(f)})});\n';
   h += '  Promise.all(promises).then(function(images){\n';
