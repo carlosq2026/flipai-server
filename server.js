@@ -37,11 +37,34 @@ app.post('/analyze', async function(req, res) {
     images.forEach(function(img) {
       content.push({ type: 'image', source: { type: 'base64', media_type: img.mimeType || 'image/jpeg', data: img.data } });
     });
-    content.push({ type: 'text', text: 'You are a professional book reseller. These photos show a book for eBay. IMPORTANT: The LAST image is a handwritten note card — read it to extract condition, shelf location, and weight (lbs and oz). All other images are book photos. Look carefully at the cover and spine to identify author and title. Reply ONLY with raw JSON, no markdown:\n{"title":"Full Book Title - NEVER leave blank","author":"Author Full Name - look hard at cover/spine, use Unknown only if truly invisible","bookTitle":"Title Only without subtitle - NEVER leave blank","format":"Hardcover or Paperback or Trade Paperback","language":"English","description":"2-3 sentences describing the book and its condition","genre":"Fiction or Nonfiction or Mystery or Romance or Thriller etc","publisher":"Publisher Name or unknown","publicationYear":"YYYY or unknown","isbn":"ISBN if visible or unknown","topic":"main subject/topic","firstEdition":"Yes or No or unknown","condition":"condition text from note card","shelfLocation":"shelf location from note card","weightLbs":"number or 0","weightOz":"number or 0","minPrice":5,"maxPrice":25,"avgPrice":12,"suggestedPrice":10}' });
+    content.push({ type: 'text', text: 'You are a professional book reseller. Analyze these book photos for an eBay listing. Look carefully at the cover and spine to find the title and author. Reply ONLY with raw JSON, no markdown:\n{"title":"Full Book Title","author":"Author Full Name or Unknown","bookTitle":"Title Only no subtitle","format":"Hardcover or Paperback or Trade Paperback","language":"English","description":"2-3 sentences about the book","genre":"Fiction or Nonfiction or Mystery or Romance or Thriller etc","publisher":"Publisher Name or unknown","publicationYear":"YYYY or unknown","isbn":"ISBN if visible or unknown","topic":"main subject/topic","firstEdition":"Yes if stated on copyright page, No otherwise","minPrice":5,"maxPrice":25,"avgPrice":12,"suggestedPrice":10}' });
     var r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 700, messages: [{ role: 'user', content: content }] })
+    });
+    res.json(await r.json());
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+
+// ANALYZE NOTE CARD — reads just the last photo for condition/shelf/weight
+app.post('/analyze-notecard', async function(req, res) {
+  var apiKey = req.body.apiKey;
+  var image = req.body.image;
+  if (!apiKey || !image) return res.status(400).json({ error: 'Missing apiKey or image' });
+  try {
+    var r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 200,
+        messages: [{ role: 'user', content: [
+          { type: 'image', source: { type: 'base64', media_type: image.mimeType || 'image/jpeg', data: image.data } },
+          { type: 'text', text: 'This is a handwritten note card for a used book. Read it carefully and extract: condition, shelf/storage location, weight in lbs and oz. Reply ONLY with raw JSON: {"condition":"text from card","shelfLocation":"location from card","weightLbs":"number or 0","weightOz":"number or 0"}' }
+        ]}]
+      })
     });
     res.json(await r.json());
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -140,6 +163,16 @@ app.post('/post-listing', async function(req, res) {
       'graphic novel': '259104'
     };
     var categoryId = categoryMap[(listing.genre || '').toLowerCase()] || '261186';
+
+    // DEBUG — log exactly what we received
+    console.log('POST-LISTING received:', JSON.stringify({
+      title: listing.title,
+      author: listing.author,
+      bookTitle: listing.bookTitle,
+      language: listing.language,
+      format: listing.format,
+      genre: listing.genre
+    }));
 
     // Item specifics — required fields always sent with fallbacks
     var specifics = '';
@@ -482,7 +515,8 @@ app.get('/', function(req, res) {
   h += '  var k=localStorage.getItem("fa_ck");\n';
   h += '  if(!k){it.status="error";it.errorMsg="No API key";return Promise.resolve()}\n';
   h += '  it.status="processing";refresh(it);\n';
-  h += '  var promises=it.files.map(function(file){\n';
+  h += '  var bookFiles=it.files.slice(0,it.files.length-1);\n';
+  h += '  var promises=bookFiles.map(function(file){\n';
   h += '    return new Promise(function(res,rej){\n';
   h += '      var fr=new FileReader();fr.onload=function(){\n';
   h += '        var img=new Image();img.onload=function(){\n';
@@ -494,22 +528,35 @@ app.get('/', function(req, res) {
   h += '      };fr.onerror=rej;fr.readAsDataURL(file);\n';
   h += '    })\n';
   h += '  });\n';
+  h += '  // Encode note card (last file) separately\n';
+  h += '  var ncFile=it.files[it.files.length-1];\n';
+  h += '  var ncPromise=new Promise(function(res,rej){var fr=new FileReader();fr.onload=function(){var img=new Image();img.onload=function(){var MAX=800,scale=Math.min(MAX/img.width,MAX/img.height,1);var c=document.createElement("canvas");c.width=Math.round(img.width*scale);c.height=Math.round(img.height*scale);c.getContext("2d").drawImage(img,0,0,c.width,c.height);res({data:c.toDataURL("image/jpeg",0.85).split(",")[1],mimeType:"image/jpeg"})};img.src=fr.result};fr.onerror=rej;fr.readAsDataURL(ncFile)});\n';
   h += '  return Promise.all(promises).then(function(images){\n';
-  h += '    return fetch("/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apiKey:k,images:images})})\n';
-  h += '    .then(function(r){return r.json()})\n';
-  h += '    .then(function(d){\n';
+  h += '    var bookCall=fetch("/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apiKey:k,images:images})}).then(function(r){return r.json()});\n';
+  h += '    var ncCall=ncPromise.then(function(ncImg){return fetch("/analyze-notecard",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apiKey:k,image:ncImg})}).then(function(r){return r.json()})});\n';
+  h += '    return Promise.all([bookCall,ncCall]).then(function(results){\n';
+  h += '      var d=results[0],nc=results[1];\n';
   h += '      if(d.error)throw new Error(d.error);\n';
   h += '      var t=(d.content||[]).map(function(c){return c.text||""}).join("");\n';
   h += '      var s=t.indexOf("{"),e=t.lastIndexOf("}");\n';
   h += '      if(s<0||e<0)throw new Error("No JSON in response");\n';
   h += '      var p=JSON.parse(t.slice(s,e+1));\n';
+  h += '      // Book fields from book photos\n';
   h += '      it.title=p.title||"Book";it.author=p.author||"Unknown";it.bookTitle=p.bookTitle||"";\n';
   h += '      it.format=p.format||"";it.language=p.language||"English";\n';
   h += '      it.desc=p.description||"";it.genre=p.genre||"";\n';
   h += '      it.publisher=p.publisher||"";it.publicationYear=p.publicationYear||"";\n';
-  h += '      it.condition=p.condition||"";it.shelfLocation=p.shelfLocation||"";it.firstEdition=p.firstEdition||"";\n';
-  h += '      it.weightLbs=String(p.weightLbs||"");it.weightOz=String(p.weightOz||"");\n';
+  h += '      it.isbn=p.isbn||"";it.topic=p.topic||"";it.firstEdition=p.firstEdition||"";\n';
   h += '      it.min=p.minPrice||5;it.max=p.maxPrice||20;it.avg=p.avgPrice||12;it.price=p.suggestedPrice||12;\n';
+  h += '      // Note card fields from dedicated note card call\n';
+  h += '      try{\n';
+  h += '        var nt=(nc.content||[]).map(function(c){return c.text||""}).join("");\n';
+  h += '        var ns=nt.indexOf("{"),ne=nt.lastIndexOf("}");\n';
+  h += '        if(ns>=0&&ne>=0){var np=JSON.parse(nt.slice(ns,ne+1));\n';
+  h += '          it.condition=np.condition||"";it.shelfLocation=np.shelfLocation||"";\n';
+  h += '          it.weightLbs=String(np.weightLbs||"");it.weightOz=String(np.weightOz||"");\n';
+  h += '        }\n';
+  h += '      }catch(e2){console.log("Note card parse failed",e2.message)}\n';
   h += '      it.status="done";\n';
   h += '    })\n';
   h += '    .catch(function(err){it.status="error";it.errorMsg=err.message.substring(0,100);toast("Error: "+it.errorMsg,"err")})\n';
