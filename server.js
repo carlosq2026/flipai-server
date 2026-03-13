@@ -22,11 +22,16 @@ app.post('/analyze', async function(req, res) {
     images.forEach(function(img) {
       content.push({ type: 'image', source: { type: 'base64', media_type: img.mimeType || 'image/jpeg', data: img.data } });
     });
-    content.push({ type: 'text', text: 'Analyze these book photos for eBay resale. Look carefully at ALL text on the cover, spine, and back — especially the author name which is almost always printed on the cover or spine. Reply ONLY with raw JSON, no markdown. Author is REQUIRED — if you can read the book cover, you can find the author. Use empty string only for truly unknown optional fields: {"title":"Full Title","author":"Author Full Name - REQUIRED, look on cover and spine","bookTitle":"Book Title Only without author","format":"Hardcover or Paperback or Trade Paperback","language":"English","description":"2-3 sentence description mentioning condition and key features","genre":"Fiction, Mystery, Science, Biography, History, Self-Help, etc or empty","publisher":"Publisher name if visible or empty","publicationYear":"4-digit year if visible or empty","isbn":"ISBN-10 or ISBN-13 if visible on back cover or empty","topic":"Main subject or topic of the book or empty","minPrice":5,"maxPrice":25,"avgPrice":12,"suggestedPrice":10}' });
+    content.push({ type: 'text', text: 'Analyze these book photos for eBay resale. IMPORTANT RULES: (1) The LAST photo is a handwritten note card — read it for location/shelf code, weight, condition, and price. DO NOT upload this note card to eBay. (2) Some photos may show the INSIDE title page or copyright page — use these to find the title, author, edition, and publication year if the cover is unclear or worn. (3) Look on the copyright page for "First Edition", "First Published", "1st Edition", or a number line like "10 9 8 7 6 5 4 3 2 1" — if any of these are present it is a 1st edition. PRICING STRATEGY - Think like a genius salesman. Use web_search in this order: (1) Search eBay SOLD listings for "[title] [author] used" — strongest signal, real transactions. (2) If 1st edition, search "[title] [author] first edition sold eBay" separately — completely different market. (3) Search Google Books "[title] [author]" for edition info. (4) Check AbeBooks/Alibris for rare books. SMART PRICING FORMULA (The Happy Steal Method): Collect recent sold prices, remove top 10% and bottom 10% outliers, take the median = TRUE market value. Set suggestedPrice = 85% of TRUE market value — low enough buyers feel they got a steal, high enough you maximize profit, triggers impulse buy. Round DOWN to .95 or .99 ending (e.g. 14.95, 19.99, 7.95) — proven to increase conversion. minPrice = 70% of TRUE market value. maxPrice = 110% of TRUE market value. avgPrice = TRUE market value median. FOR 1ST EDITIONS: use ONLY 1st edition comps, set firstEditionPremium true. FOR RARE books under 5 recent sales: price at 90% of lowest active listing. Reply ONLY with raw JSON, no markdown. Use empty string for unknown optional fields. {"title":"Full Title","author":"Author Full Name - look on cover, spine, AND inside title page","bookTitle":"Book Title Only","format":"Hardcover or Paperback or Trade Paperback","language":"English","description":"2-3 sentence description of the book and condition. If 1st edition, start description with FIRST EDITION and mention it prominently.","genre":"Fiction, Mystery, Science, Biography, History, Self-Help, etc or empty","publisher":"Publisher name or empty","publicationYear":"4-digit year or empty","isbn":"ISBN-10 or ISBN-13 or empty","topic":"Main subject or empty","condition":"from note card or guessed from photos","weightLbs":"numeric lbs from note card or empty","weightOz":"numeric oz from note card or empty","location":"location/shelf code from note card or empty","firstEdition":true or false,"firstEditionPremium":true or false,"minPrice":5,"maxPrice":25,"avgPrice":12,"suggestedPrice":10}' });
     var r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 600, messages: [{ role: 'user', content: content }] })
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1200,
+        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+        messages: [{ role: 'user', content: content }]
+      })
     });
     res.json(await r.json());
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -93,7 +98,7 @@ app.post('/post-listing', async function(req, res) {
     if (listing.topic) specifics += '<NameValueList><Name>Topic</Name><Value>' + esc(listing.topic) + '</Value></NameValueList>';
     var xml = '<?xml version="1.0" encoding="utf-8"?><AddItemRequest xmlns="urn:ebay:apis:eBLBaseComponents"><RequesterCredentials><eBayAuthToken>' + token + '</eBayAuthToken></RequesterCredentials><Item>' +
       '<Title>' + esc(listing.title) + '</Title>' +
-      '<Description><![CDATA[' + (listing.description || '') + ']]></Description>' +
+      '<Description><![CDATA[' + fullDescription + ']]></Description>' +
       pictureXml +
       '<ItemSpecifics>' + specifics + '</ItemSpecifics>' +
       '<PrimaryCategory><CategoryID>261186</CategoryID></PrimaryCategory>' +
@@ -106,7 +111,16 @@ app.post('/post-listing', async function(req, res) {
       '<Quantity>1</Quantity>' +
       '<ShippingDetails><ShippingType>Flat</ShippingType><ShippingServiceOptions><ShippingServicePriority>1</ShippingServicePriority><ShippingService>USPSMedia</ShippingService><ShippingServiceCost>3.99</ShippingServiceCost></ShippingServiceOptions></ShippingDetails>' +
       '<ReturnPolicy><ReturnsAcceptedOption>ReturnsNotAccepted</ReturnsAcceptedOption></ReturnPolicy>' +
-      '<ConditionID>3000</ConditionID><Site>US</Site></Item></AddItemRequest>';
+      '<ConditionID>' + conditionId + '</ConditionID>' +
+      '<ShippingPackageDetails>' +
+        '<ShippingPackage>PackageThickEnvelope</ShippingPackage>' +
+        '<WeightMajor unit="lbs">' + (parseInt(listing.weightLbs)||0) + '</WeightMajor>' +
+        '<WeightMinor unit="oz">' + (parseInt(listing.weightOz)||0) + '</WeightMinor>' +
+        '<PackageDepth unit="in">7</PackageDepth>' +
+        '<PackageLength unit="in">7</PackageLength>' +
+        '<PackageWidth unit="in">7</PackageWidth>' +
+      '</ShippingPackageDetails>' +
+      '<Site>US</Site></Item></AddItemRequest>';
     var r = await fetch('https://api.ebay.com/ws/api.dll', {
       method: 'POST',
       headers: { 'Content-Type': 'text/xml', 'X-EBAY-API-SITEID': '0', 'X-EBAY-API-COMPATIBILITY-LEVEL': '967', 'X-EBAY-API-CALL-NAME': 'AddItem', 'X-EBAY-API-APP-NAME': appId || '' },
@@ -173,6 +187,9 @@ app.get('/', function(req, res) {
   h += '.ef-row{display:grid;grid-template-columns:1fr 1fr;gap:6px}';
   h += '.fl{font-size:0.63rem;color:#6b6b8a;text-transform:uppercase;margin-bottom:2px}';
   h += '.actions{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}';
+  h += '.edit-btn{background:none;border:none;cursor:pointer;font-size:0.75rem;padding:0 3px;opacity:0.6;transition:opacity .15s}.edit-btn:hover{opacity:1}';
+  h += '.ef-val{background:#12121a;border:1px solid #2a2a3d;border-radius:5px;padding:7px 9px;color:#f0f0ff;font-size:0.75rem;margin-bottom:6px;min-height:32px}';
+  h += '.price-edit{color:#ffb800;font-weight:bold;font-size:0.9rem}';
   h += '.toast-wrap{position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;max-width:320px}';
   h += '.toast{background:#1a1a26;border:1px solid #00e5a0;border-radius:8px;padding:12px 16px;font-size:0.82rem}';
   h += '.toast.err{border-color:#ff6b35}';
@@ -287,7 +304,7 @@ app.get('/', function(req, res) {
   h += '    }\n';
   h += '  }\n';
   h += '  if(cur.length)groups.push(cur);\n';
-  h += '  groups.forEach(function(g){items.push({id:Date.now()+Math.random(),files:g,urls:g.map(function(f){return URL.createObjectURL(f)}),mainIdx:0,status:"idle",title:"",author:"",bookTitle:"",format:"",language:"English",desc:"",genre:"",publisher:"",publicationYear:"",isbn:"",topic:"",price:10,min:5,max:20,avg:12})});\n';
+  h += '  groups.forEach(function(g){items.push({id:Date.now()+Math.random(),files:g,urls:g.map(function(f){return URL.createObjectURL(f)}),mainIdx:0,status:"idle",title:"",author:"",bookTitle:"",format:"",language:"English",desc:"",genre:"",publisher:"",publicationYear:"",isbn:"",topic:"",condition:"Good",weightLbs:"",weightOz:"",location:"",firstEdition:false,firstEditionPremium:false,price:10,min:5,max:20,avg:12,conditionId:"3000",weightLbs:"",weightOz:""})});\n';
   h += '  document.getElementById("statsWrap").style.display="block";\n';
   h += '  document.getElementById("gapInfo").textContent="Grouped "+imgs.length+" photos into "+groups.length+" books ("+GAP_SECONDS+"s gap rule)";\n';
   h += '  render();updateStats();toast("Grouped "+imgs.length+" photos into "+groups.length+" books!","")\n';
@@ -322,6 +339,8 @@ app.get('/', function(req, res) {
   h += '  return b\n';
   h += '}\n';
 
+  h += 'function editField(id,field){var item=items.find(function(i){return i.id==id});if(!item)return;if(field==="author")item.editingAuthor=true;if(field==="price")item.editingPrice=true;refresh(item);setTimeout(function(){var el=document.getElementById("ef_"+field+"_"+id);if(el){el.focus();el.select()}},50)}\n';
+  h += 'function doneEdit(id,field){var item=items.find(function(i){return i.id==id});if(!item)return;if(field==="author")item.editingAuthor=false;if(field==="price")item.editingPrice=false;refresh(item)}\n';
   h += 'function esc(s){return(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}\n';
   h += 'function upd(id,f,v){var i=items.find(function(x){return x.id==id});if(i){i[f]=v;updateStats()}}\n';
   h += 'function clearAll(){items=[];render();document.getElementById("statsWrap").style.display="none";updateStats()}\n';
@@ -356,7 +375,7 @@ app.get('/', function(req, res) {
   h += '    .then(function(r){return r.json()})\n';
   h += '    .then(function(d){\n';
   h += '      if(d.error)throw new Error(d.error);\n';
-  h += '      var t=(d.content||[]).map(function(c){return c.text||""}).join("");\n';
+  h += '      var t=(d.content||[]).filter(function(c){return c.type==="text"}).map(function(c){return c.text||""}).join("");\n';
   h += '      var s=t.indexOf("{"),e=t.lastIndexOf("}");\n';
   h += '      var p=JSON.parse(t.slice(s,e+1));\n';
   h += '      item.title=p.title||"Book";item.author=p.author||"Unknown";item.bookTitle=p.bookTitle||p.title||"Book";\n';
@@ -399,7 +418,7 @@ app.get('/', function(req, res) {
   h += '  var promises=orderedFiles.map(function(f){return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res({data:r.result.split(",")[1],mimeType:f.type||"image/jpeg"})};r.onerror=rej;r.readAsDataURL(f)})});\n';
   h += '  Promise.all(promises).then(function(images){\n';
   h += '    return fetch("/post-listing",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({\n';
-  h += '      listing:{title:item.title,author:item.author,bookTitle:item.bookTitle,format:item.format,language:item.language,description:item.desc,genre:item.genre,publisher:item.publisher,publicationYear:item.publicationYear,isbn:item.isbn,topic:item.topic,price:item.price},images:images})})\n';
+  h += '      listing:{title:item.title,author:item.author,bookTitle:item.bookTitle,format:item.format,language:item.language,description:item.desc,genre:item.genre,publisher:item.publisher,publicationYear:item.publicationYear,isbn:item.isbn,topic:item.topic,price:item.price,conditionId:item.conditionId,weightLbs:item.weightLbs,weightOz:item.weightOz},images:images})})\n';
   h += '    .then(function(r){return r.json()})\n';
   h += '    .then(function(d){\n';
   h += '      if(d.success){item.ebayId=d.itemId;item.ebayUrl=d.url;item.status="posted";toast("Posted! eBay #"+d.itemId,"");updateStats()}\n';
