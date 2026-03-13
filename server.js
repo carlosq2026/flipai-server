@@ -129,20 +129,15 @@ app.post('/analyze', async function(req, res) {
 
 // ─── UPLOAD PHOTO TO EBAY ─────────────────────────────────────────────────────
 async function uploadPhotoToEbay(base64Data, mimeType, appId, token) {
-  // Use EPS (eBay Picture Services) — only needs App ID, no user token required
-  var boundary = 'EBAY_BOUNDARY_' + Date.now();
+  // App ID in headers only — exactly as the original working version
+  var boundary = 'FLIPAI_' + Date.now();
   var imgBuffer = Buffer.from(base64Data, 'base64');
   var ext = (mimeType || 'image/jpeg').split('/')[1] || 'jpg';
   if (ext === 'jpeg') ext = 'jpg';
-  var bodyStart = Buffer.from(
-    '--' + boundary + '\r\n' +
-    'Content-Disposition: form-data; name="image"; filename="book.' + ext + '"\r\n' +
-    'Content-Type: ' + (mimeType || 'image/jpeg') + '\r\n' +
-    'Content-Transfer-Encoding: binary\r\n\r\n',
-    'binary'
-  );
-  var bodyEnd = Buffer.from('\r\n--' + boundary + '--\r\n', 'binary');
-  var fullBody = Buffer.concat([bodyStart, imgBuffer, bodyEnd]);
+  var CRLF = '\r\n';
+  var imgHeader = Buffer.from('--' + boundary + CRLF + 'Content-Disposition: form-data; name="image"; filename="book.' + ext + '"' + CRLF + 'Content-Type: ' + (mimeType||'image/jpeg') + CRLF + 'Content-Transfer-Encoding: binary' + CRLF + CRLF, 'binary');
+  var imgFooter = Buffer.from(CRLF + '--' + boundary + '--' + CRLF, 'binary');
+  var fullBody = Buffer.concat([imgHeader, imgBuffer, imgFooter]);
   var r = await fetch('https://api.ebay.com/ws/api.dll', {
     method: 'POST',
     headers: {
@@ -151,16 +146,15 @@ async function uploadPhotoToEbay(base64Data, mimeType, appId, token) {
       'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
       'X-EBAY-API-CALL-NAME': 'UploadSiteHostedPictures',
       'X-EBAY-API-APP-NAME': appId || '',
-      'X-EBAY-API-IAF-TOKEN': token || ''
+      'Content-Length': String(fullBody.length)
     },
     body: fullBody
   });
   var text = await r.text();
+  console.log('Photo upload response:', text.substring(0, 400));
   var match = text.match(/<FullURL>(.*?)<\/FullURL>/);
   if (match) return match[1];
-  // Log full error for debugging
-  console.log('Photo upload response:', text.substring(0, 500));
-  throw new Error('Photo upload failed: ' + text.substring(0, 200));
+  throw new Error('Photo upload failed: ' + text.substring(0, 150));
 }
 
 // ─── POST LISTING TO EBAY ─────────────────────────────────────────────────────
