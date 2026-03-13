@@ -217,12 +217,12 @@ app.post('/post-listing', async function(req, res) {
       '<Title>' + esc((listing.title || 'Book').substring(0, 80)) + '</Title>' +
       '<Description><![CDATA[' + fullDescription + ']]></Description>' +
       '<PrimaryCategory><CategoryID>' + (function(){
-        var fmt=(listing.format||'').toLowerCase();
         var gen=(listing.genre||'').toLowerCase();
-        if(gen.includes('child')) return '11721';      // Children's Books
+        if(gen.includes('child')) return '11721';       // Children's Books
         if(gen.includes('comic')||gen.includes('manga')) return '259104'; // Comics
-        if(fmt.includes('hard')) return '29223';       // Hardcover Books
-        return '29240';                                 // Paperback Books (default)
+        if(gen.includes('fiction')||gen.includes('mystery')||gen.includes('thriller')||gen.includes('romance')) return '261186'; // Fiction Books
+        if(gen.includes('history')||gen.includes('biography')||gen.includes('science')||gen.includes('self')) return '11232'; // Nonfiction Books
+        return '280';                                   // Books (safe default)
       })() + '</CategoryID></PrimaryCategory>' +
       '<StartPrice>' + (parseFloat(listing.price) || 9.99).toFixed(2) + '</StartPrice>' +
       '<Quantity>1</Quantity>' +
