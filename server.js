@@ -285,7 +285,7 @@ app.get('/', function(req, res) {
   h += '.fl{font-size:0.63rem;color:#6b6b8a;text-transform:uppercase;margin-bottom:2px}';
   h += '.fl.g{color:#00e5a0}.fl.y{color:#ffb800}';
   h += '.acts{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}';
-  h += '.tw{position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;max-width:340px}';
+  h += '.tw{position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;max-width:480px}';
   h += '.tn{background:#1a1a26;border:1px solid #00e5a0;border-radius:8px;padding:12px 16px;font-size:0.82rem;word-break:break-word}.tn.err{border-color:#ff6b35}';
   h += '.mbg{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px}';
   h += '.mo{background:#1a1a26;border:1px solid #00e5a0;border-radius:16px;padding:24px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto}';
@@ -554,7 +554,7 @@ app.get('/', function(req, res) {
   h += '    .then(function(r){return r.json()})\n';
   h += '    .then(function(d){\n';
   h += '      if(d.success){it.ebayId=d.itemId;it.ebayUrl=d.url;it.status="posted";refresh(it);toast("Posted! eBay #"+d.itemId,"");updateStats()}\n';
-  h += '      else{it.status="done";refresh(it);toast("eBay: "+(d.message||"error").substring(0,120),"err")}\n';
+  h += '      else{it.status="error";it.errorMsg=(d.message||"eBay error")+(d.raw?" | "+d.raw:"");refresh(it);toast("eBay: "+it.errorMsg.substring(0,400),"err")}\n';
   h += '    })\n';
   h += '    .catch(function(err){it.status="done";refresh(it);toast("Error: "+err.message,"err")})\n';
   h += '  })\n';
@@ -580,7 +580,7 @@ app.get('/', function(req, res) {
   h += '  document.getElementById("sPo").textContent=posted;\n';
   h += '}\n';
 
-  h += 'function toast(msg,type){var w=document.getElementById("tw"),t=document.createElement("div");t.className="tn"+(type?" "+type:"");t.textContent=msg;w.appendChild(t);setTimeout(function(){t.remove()},6000)}\n';
+  h += 'function toast(msg,type){var w=document.getElementById("tw"),t=document.createElement("div");t.className="tn"+(type?" "+type:"");t.textContent=msg;w.appendChild(t);setTimeout(function(){t.remove()},type==="err"?15000:6000)}\n';
 
   h += '<\/script></body></html>';
   res.send(h);
@@ -623,8 +623,9 @@ app.post('/debug-xml', async function(req, res) {
 });
 
 
-// RAW TEST — posts minimal XML to eBay and returns the full raw response
+// RAW TEST — GET /rawtest?author=Karen+Kingsbury to test with a real author name
 app.get('/rawtest', async function(req, res) {
+  var testAuthor = req.query.author || 'Karen Kingsbury';
   var token = process.env.EBAY_USER_TOKEN;
   var appId = process.env.EBAY_APP_ID;
   var postal = process.env.POSTAL_CODE || '14701';
