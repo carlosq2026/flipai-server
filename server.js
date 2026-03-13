@@ -88,32 +88,48 @@ app.post('/analyze', async function(req, res) {
 
 // ─── UPLOAD PHOTO TO EBAY ─────────────────────────────────────────────────────
 async function uploadPhotoToEbay(base64Data, mimeType, appId, token) {
+  // Use EPS (eBay Picture Services) — only needs App ID, no user token required
   var boundary = 'EBAY_BOUNDARY_' + Date.now();
-  var xmlPart = '<?xml version="1.0" encoding="utf-8"?><UploadSiteHostedPicturesRequest xmlns="urn:ebay:apis:eBLBaseComponents"><RequesterCredentials><eBayAuthToken>' + token + '</eBayAuthToken></RequesterCredentials><PictureName>book</PictureName></UploadSiteHostedPicturesRequest>';
   var imgBuffer = Buffer.from(base64Data, 'base64');
   var ext = (mimeType || 'image/jpeg').split('/')[1] || 'jpg';
-  var bodyStart = Buffer.from('--' + boundary + '\r\nContent-Disposition: form-data; name="XML Payload"\r\nContent-Type: text/xml;charset=utf-8\r\n\r\n' + xmlPart + '\r\n--' + boundary + '\r\nContent-Disposition: form-data; name="image"; filename="book.' + ext + '"\r\nContent-Type: ' + (mimeType || 'image/jpeg') + '\r\nContent-Transfer-Encoding: binary\r\n\r\n', 'binary');
+  if (ext === 'jpeg') ext = 'jpg';
+  var bodyStart = Buffer.from(
+    '--' + boundary + '\r\n' +
+    'Content-Disposition: form-data; name="image"; filename="book.' + ext + '"\r\n' +
+    'Content-Type: ' + (mimeType || 'image/jpeg') + '\r\n' +
+    'Content-Transfer-Encoding: binary\r\n\r\n',
+    'binary'
+  );
   var bodyEnd = Buffer.from('\r\n--' + boundary + '--\r\n', 'binary');
   var fullBody = Buffer.concat([bodyStart, imgBuffer, bodyEnd]);
   var r = await fetch('https://api.ebay.com/ws/api.dll', {
     method: 'POST',
-    headers: { 'Content-Type': 'multipart/form-data; boundary=' + boundary, 'X-EBAY-API-SITEID': '0', 'X-EBAY-API-COMPATIBILITY-LEVEL': '967', 'X-EBAY-API-CALL-NAME': 'UploadSiteHostedPictures', 'X-EBAY-API-APP-NAME': appId || '', 'Content-Length': fullBody.length },
+    headers: {
+      'Content-Type': 'multipart/form-data; boundary=' + boundary,
+      'X-EBAY-API-SITEID': '0',
+      'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
+      'X-EBAY-API-CALL-NAME': 'UploadSiteHostedPictures',
+      'X-EBAY-API-APP-NAME': appId || '',
+      'X-EBAY-API-IAF-TOKEN': token || ''
+    },
     body: fullBody
   });
   var text = await r.text();
   var match = text.match(/<FullURL>(.*?)<\/FullURL>/);
   if (match) return match[1];
-  throw new Error('Photo upload failed: ' + text.substring(0, 300));
+  // Log full error for debugging
+  console.log('Photo upload response:', text.substring(0, 500));
+  throw new Error('Photo upload failed: ' + text.substring(0, 200));
 }
 
 // ─── POST LISTING TO EBAY ─────────────────────────────────────────────────────
 app.post('/post-listing', async function(req, res) {
   var listing = req.body.listing;
   var images = req.body.images || [];
-  var token = process.env.EBAY_USER_TOKEN;
   var appId = process.env.EBAY_APP_ID;
+  var token = req.body.ebayToken || process.env.EBAY_USER_TOKEN || '';
   var postalCode = process.env.POSTAL_CODE || '14701';
-  if (!token || !appId) return res.status(400).json({ error: 'Missing eBay credentials in environment' });
+  if (!appId) return res.status(400).json({ error: 'Missing EBAY_APP_ID in Railway environment' });
 
   try {
     // Upload photos (strip last if it's a note card — already handled client side)
@@ -636,7 +652,9 @@ app.get('/', function(req, res) {
   h += '  var orderedFiles=[ebayFiles[mi]].concat(ebayFiles.filter(function(_,i){return i!==mi}));\n';
   h += '  var promises=orderedFiles.map(function(f){return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res({data:r.result.split(",")[1],mimeType:f.type||"image/jpeg"})};r.onerror=rej;r.readAsDataURL(f)})});\n';
   h += '  Promise.all(promises).then(function(images){\n';
+  h += '    var ebayTok=localStorage.getItem("fa_ek")||"";\n';
   h += '    return fetch("/post-listing",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({\n';
+  h += '      ebayToken:ebayTok,\n';
   h += '      listing:{title:item.title,author:item.author,bookTitle:item.bookTitle,format:item.format,language:item.language,description:item.desc,genre:item.genre,publisher:item.publisher,publicationYear:item.publicationYear,isbn:item.isbn,topic:item.topic,price:item.price,condition:item.condition,conditionId:item.conditionId,weightLbs:item.weightLbs,weightOz:item.weightOz,location:item.location,firstEdition:item.firstEdition},\n';
   h += '      images:images})})\n';
   h += '    .then(function(r){return r.json()})\n';
