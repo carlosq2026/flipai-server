@@ -133,15 +133,14 @@ app.post('/post-listing', async function(req, res) {
 
     // Item specifics
     var specifics = '';
-    specifics += '<NameValueList><n>Author</n><Value>' + esc(listing.author || 'Unknown') + '</Value></NameValueList>';
-    if (listing.bookTitle) specifics += '<NameValueList><n>Book Title</n><Value>' + esc(listing.bookTitle) + '</Value></NameValueList>';
-    if (listing.format) specifics += '<NameValueList><n>Format</n><Value>' + esc(listing.format) + '</Value></NameValueList>';
-    specifics += '<NameValueList><n>Language</n><Value>English</Value></NameValueList>';
-    if (listing.genre) specifics += '<NameValueList><n>Genre</n><Value>' + esc(listing.genre) + '</Value></NameValueList>';
-    if (listing.publisher && listing.publisher !== 'unknown') specifics += '<NameValueList><n>Publisher</n><Value>' + esc(listing.publisher) + '</Value></NameValueList>';
-    if (listing.publicationYear && listing.publicationYear !== 'unknown') specifics += '<NameValueList><n>Publication Year</n><Value>' + esc(listing.publicationYear) + '</Value></NameValueList>';
-    if (listing.isbn && listing.isbn !== 'unknown') specifics += '<NameValueList><n>ISBN</n><Value>' + esc(listing.isbn) + '</Value></NameValueList>';
-    if (listing.topic) specifics += '<NameValueList><n>Topic</n><Value>' + esc(listing.topic) + '</Value></NameValueList>';
+    specifics += '<NameValueList><Name>Author</Name><Value>' + esc(listing.author || 'Unknown') + '</Value></NameValueList>';
+    if (listing.bookTitle) specifics += '<NameValueList><Name>Book Title</Name><Value>' + esc(listing.bookTitle) + '</Value></NameValueList>';
+    if (listing.format) specifics += '<NameValueList><Name>Format</Name><Value>' + esc(listing.format) + '</Value></NameValueList>';
+    if (listing.genre) specifics += '<NameValueList><Name>Genre</Name><Value>' + esc(listing.genre) + '</Value></NameValueList>';
+    if (listing.publisher && listing.publisher !== 'unknown') specifics += '<NameValueList><Name>Publisher</Name><Value>' + esc(listing.publisher) + '</Value></NameValueList>';
+    if (listing.publicationYear && listing.publicationYear !== 'unknown') specifics += '<NameValueList><Name>Publication Year</Name><Value>' + esc(listing.publicationYear) + '</Value></NameValueList>';
+    if (listing.isbn && listing.isbn !== 'unknown') specifics += '<NameValueList><Name>ISBN</Name><Value>' + esc(listing.isbn) + '</Value></NameValueList>';
+    if (listing.topic) specifics += '<NameValueList><Name>Topic</Name><Value>' + esc(listing.topic) + '</Value></NameValueList>';
 
     // Description: AI text + shelf location appended
     var description = listing.description || '';
@@ -181,6 +180,7 @@ app.post('/post-listing', async function(req, res) {
           '<ListingType>FixedPriceItem</ListingType>' +
           '<PostalCode>' + postal + '</PostalCode>' +
           '<Quantity>1</Quantity>' +
+          '<Language>English</Language>' +
           '<ShippingDetails>' +
             '<ShippingType>Flat</ShippingType>' +
             '<ShippingServiceOptions>' +
