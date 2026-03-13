@@ -102,7 +102,7 @@ app.post('/post-listing', async function(req, res) {
   if (!token) return res.status(500).json({ success: false, message: 'EBAY_USER_TOKEN not set in Railway env vars' });
 
   try {
-    // Upload book photos in parallel (note card already excluded on frontend)
+    // Upload all photos in parallel
     var uploadPromises = images.slice(0, 12).map(function(img) {
       return uploadPhotoToEbay(img.data, img.mimeType, appId, token).catch(function(e) {
         console.log('Photo upload skipped:', e.message);
@@ -116,89 +116,96 @@ app.post('/post-listing', async function(req, res) {
       ? '<PictureDetails>' + uploadedUrls.map(function(u) { return '<PictureURL>' + u + '</PictureURL>'; }).join('') + '</PictureDetails>'
       : '';
 
-    // Condition text to eBay ID
+    // Condition mapping
     var conditionMap = {
-      'new': '1000', 'like new': '2750', 'very good': '2750',
-      'good': '3000', 'acceptable': '4000', 'poor': '7000',
-      'for parts': '7000', 'for parts/not working': '7000'
+      'new': '1000',
+      'like new': '2750',
+      'very good': '2750',
+      'good': '3000',
+      'acceptable': '4000',
+      'poor': '7000',
+      'for parts': '7000',
+      'for parts/not working': '7000'
     };
     var conditionId = conditionMap[(listing.condition || 'good').toLowerCase()] || '3000';
 
-    // Genre to eBay category
+    // Category mapping
     var categoryMap = {
-      'fiction': '261186', 'nonfiction': '11232', 'non-fiction': '11232',
-      'children': '11721', "children's": '11721', 'comics': '259104', 'graphic novel': '259104'
+      'fiction': '261186',
+      'nonfiction': '11232',
+      'non-fiction': '11232',
+      'children': '11721',
+      "children's": '11721',
+      'comics': '259104',
+      'graphic novel': '259104'
     };
     var categoryId = categoryMap[(listing.genre || '').toLowerCase()] || '261186';
 
     // Item specifics
     var specifics = '';
-    specifics += '<NameValueList><Name>Author</Name><Value>' + esc(listing.author || 'Unknown') + '</Value></NameValueList>';
-    if (listing.bookTitle) specifics += '<NameValueList><Name>Book Title</Name><Value>' + esc(listing.bookTitle) + '</Value></NameValueList>';
-    if (listing.format) specifics += '<NameValueList><Name>Format</Name><Value>' + esc(listing.format) + '</Value></NameValueList>';
-    if (listing.genre) specifics += '<NameValueList><Name>Genre</Name><Value>' + esc(listing.genre) + '</Value></NameValueList>';
-    if (listing.publisher && listing.publisher !== 'unknown') specifics += '<NameValueList><Name>Publisher</Name><Value>' + esc(listing.publisher) + '</Value></NameValueList>';
-    if (listing.publicationYear && listing.publicationYear !== 'unknown') specifics += '<NameValueList><Name>Publication Year</Name><Value>' + esc(listing.publicationYear) + '</Value></NameValueList>';
-    if (listing.isbn && listing.isbn !== 'unknown') specifics += '<NameValueList><Name>ISBN</Name><Value>' + esc(listing.isbn) + '</Value></NameValueList>';
-    if (listing.topic) specifics += '<NameValueList><Name>Topic</Name><Value>' + esc(listing.topic) + '</Value></NameValueList>';
+    specifics += '<NameValueList><n>Author</n><Value>' + esc(listing.author || 'Unknown') + '</Value></NameValueList>';
+    if (listing.bookTitle) specifics += '<NameValueList><n>Book Title</n><Value>' + esc(listing.bookTitle) + '</Value></NameValueList>';
+    if (listing.format) specifics += '<NameValueList><n>Format</n><Value>' + esc(listing.format) + '</Value></NameValueList>';
+    specifics += '<NameValueList><n>Language</n><Value>English</Value></NameValueList>';
+    if (listing.genre) specifics += '<NameValueList><n>Genre</n><Value>' + esc(listing.genre) + '</Value></NameValueList>';
+    if (listing.publisher && listing.publisher !== 'unknown') specifics += '<NameValueList><n>Publisher</n><Value>' + esc(listing.publisher) + '</Value></NameValueList>';
+    if (listing.publicationYear && listing.publicationYear !== 'unknown') specifics += '<NameValueList><n>Publication Year</n><Value>' + esc(listing.publicationYear) + '</Value></NameValueList>';
+    if (listing.isbn && listing.isbn !== 'unknown') specifics += '<NameValueList><n>ISBN</n><Value>' + esc(listing.isbn) + '</Value></NameValueList>';
+    if (listing.topic) specifics += '<NameValueList><n>Topic</n><Value>' + esc(listing.topic) + '</Value></NameValueList>';
 
     // Description: AI text + shelf location appended
-    var description = listing.description || '';
-    if (listing.shelfLocation) {
-      description += '\n\nLocation: ' + listing.shelfLocation;
-    }
+    var description = (listing.description || '');
+    if (listing.shelfLocation) description += '\n\nLocation: ' + listing.shelfLocation;
 
-    // Package: weight + 7x7x7 box (always included, user can edit)
-    var weightLbs = parseInt(listing.weightLbs) || 0;
-    var weightOz  = parseInt(listing.weightOz)  || 0;
-    var boxL = parseInt(listing.boxL) || 7;
-    var boxW = parseInt(listing.boxW) || 7;
-    var boxH = parseInt(listing.boxH) || 7;
-    var packageXml =
-      '<ShippingPackageDetails>' +
-        '<WeightMajor unit="lbs">' + weightLbs + '</WeightMajor>' +
-        '<WeightMinor unit="oz">'  + weightOz  + '</WeightMinor>' +
+    // Weight + box dimensions (only include if weight provided)
+    var weightXml = '';
+    if (listing.weightLbs || listing.weightOz) {
+      var boxL = parseInt(listing.boxL) || 7;
+      var boxW = parseInt(listing.boxW) || 7;
+      var boxH = parseInt(listing.boxH) || 7;
+      weightXml = '<ShippingPackageDetails>' +
+        '<WeightMajor unit="lbs">' + (parseInt(listing.weightLbs) || 0) + '</WeightMajor>' +
+        '<WeightMinor unit="oz">' + (parseInt(listing.weightOz) || 0) + '</WeightMinor>' +
         '<PackageDepth unit="in">' + boxH + '</PackageDepth>' +
         '<PackageLength unit="in">' + boxL + '</PackageLength>' +
-        '<PackageWidth unit="in">'  + boxW + '</PackageWidth>' +
-      '</ShippingPackageDetails>';
+        '<PackageWidth unit="in">' + boxW + '</PackageWidth>' +
+        '</ShippingPackageDetails>';
+    }
 
-    var xml =
-      '<?xml version="1.0" encoding="utf-8"?>' +
+    var xml = '<?xml version="1.0" encoding="utf-8"?>' +
       '<AddItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">' +
-        '<RequesterCredentials><eBayAuthToken>' + token + '</eBayAuthToken></RequesterCredentials>' +
-        '<Item>' +
-          '<Title>' + esc(listing.title) + '</Title>' +
-          '<Description><![CDATA[' + description + ']]></Description>' +
-          pictureXml +
-          '<ItemSpecifics>' + specifics + '</ItemSpecifics>' +
-          '<PrimaryCategory><CategoryID>' + categoryId + '</CategoryID></PrimaryCategory>' +
-          '<StartPrice>' + (parseFloat(listing.price) || 9.99) + '</StartPrice>' +
-          '<Country>US</Country><Currency>USD</Currency>' +
-          '<DispatchTimeMax>3</DispatchTimeMax>' +
-          '<ListingDuration>GTC</ListingDuration>' +
-          '<ListingType>FixedPriceItem</ListingType>' +
-          '<PostalCode>' + postal + '</PostalCode>' +
-          '<Quantity>1</Quantity>' +
-          '<Language>English</Language>' +
-          '<ShippingDetails>' +
-            '<ShippingType>Flat</ShippingType>' +
-            '<ShippingServiceOptions>' +
-              '<ShippingServicePriority>1</ShippingServicePriority>' +
-              '<ShippingService>USPSMedia</ShippingService>' +
-              '<ShippingServiceCost>3.99</ShippingServiceCost>' +
-            '</ShippingServiceOptions>' +
-          '</ShippingDetails>' +
-          '<ReturnPolicy>' +
-            '<ReturnsAcceptedOption>ReturnsAccepted</ReturnsAcceptedOption>' +
-            '<ReturnsWithinOption>Days_30</ReturnsWithinOption>' +
-            '<ShippingCostPaidByOption>Buyer</ShippingCostPaidByOption>' +
-          '</ReturnPolicy>' +
-          '<ConditionID>' + conditionId + '</ConditionID>' +
-          packageXml +
-          '<Language>English</Language>' +
-          '<Site>US</Site>' +
-        '</Item>' +
+      '<RequesterCredentials><eBayAuthToken>' + token + '</eBayAuthToken></RequesterCredentials>' +
+      '<Item>' +
+      '<Title>' + esc(listing.title) + '</Title>' +
+      '<Description><![CDATA[' + description + ']]></Description>' +
+      pictureXml +
+      '<ItemSpecifics>' + specifics + '</ItemSpecifics>' +
+      '<PrimaryCategory><CategoryID>' + categoryId + '</CategoryID></PrimaryCategory>' +
+      '<StartPrice>' + (parseFloat(listing.price) || 9.99) + '</StartPrice>' +
+      '<Country>US</Country>' +
+      '<Currency>USD</Currency>' +
+      '<DispatchTimeMax>3</DispatchTimeMax>' +
+      '<ListingDuration>GTC</ListingDuration>' +
+      '<ListingType>FixedPriceItem</ListingType>' +
+      '<PostalCode>' + postal + '</PostalCode>' +
+      '<Quantity>1</Quantity>' +
+      '<ShippingDetails>' +
+      '<ShippingType>Flat</ShippingType>' +
+      '<ShippingServiceOptions>' +
+      '<ShippingServicePriority>1</ShippingServicePriority>' +
+      '<ShippingService>USPSMedia</ShippingService>' +
+      '<ShippingServiceCost>3.99</ShippingServiceCost>' +
+      '</ShippingServiceOptions>' +
+      '</ShippingDetails>' +
+      '<ReturnPolicy>' +
+      '<ReturnsAcceptedOption>ReturnsAccepted</ReturnsAcceptedOption>' +
+      '<ReturnsWithinOption>Days_30</ReturnsWithinOption>' +
+      '<ShippingCostPaidByOption>Buyer</ShippingCostPaidByOption>' +
+      '</ReturnPolicy>' +
+      '<ConditionID>' + conditionId + '</ConditionID>' +
+      weightXml +
+      '<Site>US</Site>' +
+      '</Item>' +
       '</AddItemRequest>';
 
     var r = await fetch('https://api.ebay.com/ws/api.dll', {
