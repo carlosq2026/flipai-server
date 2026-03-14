@@ -37,7 +37,7 @@ app.post('/analyze', async function(req, res) {
     images.forEach(function(img) {
       content.push({ type: 'image', source: { type: 'base64', media_type: img.mimeType || 'image/jpeg', data: img.data } });
     });
-    content.push({ type: 'text', text: 'You are a professional book reseller. Analyze these book photos for eBay listing. Reply ONLY with raw JSON, no markdown, no explanation:\n{"title":"Full Title","author":"Author Name or Unknown","bookTitle":"Title Only","format":"Hardcover or Paperback or Trade Paperback","language":"English","description":"2-3 sentences describing the book and visible condition","genre":"Fiction or Nonfiction or Mystery etc","publisher":"Publisher Name or unknown","publicationYear":"YYYY or unknown","isbn":"ISBN if visible or unknown","topic":"main subject/topic","condition":"New or Like New or Good or Acceptable","firstEdition":"Yes if 1st edition stated on copyright page or cover, No otherwise","minPrice":5,"maxPrice":25,"avgPrice":12,"suggestedPrice":10}' });
+    content.push({ type: 'text', text: 'You are a professional book reseller. Analyze these book photos for eBay listing. Reply ONLY with raw JSON, no markdown, no explanation:\n{"title":"Full Title","author":"Author Name or Unknown","bookTitle":"Title Only","format":"Hardcover or Paperback or Trade Paperback","language":"English","description":"2-3 sentences describing the book and visible condition","genre":"Fiction or Nonfiction or Mystery etc","publisher":"Publisher Name or unknown","publicationYear":"YYYY or unknown","isbn":"ISBN if visible or unknown","topic":"main subject/topic","condition":"Brand New or Like New or Very Good or Good or Acceptable","firstEdition":"Yes if 1st edition stated on copyright page or cover, No otherwise","minPrice":5,"maxPrice":25,"avgPrice":12,"suggestedPrice":10}' });
     var r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
@@ -120,19 +120,16 @@ app.post('/post-listing', async function(req, res) {
       ? '<PictureDetails>' + uploadedUrls.map(function(u) { return '<PictureURL>' + u + '</PictureURL>'; }).join('') + '</PictureDetails>'
       : '';
 
-    // Condition mapping
+    // Condition mapping — matches eBay's actual book condition options exactly
     var conditionMap = {
-      'new': '1000',
-      'like new': '2750',
-      'very good': '2750',
-      'good': '3000',
-      'acceptable': '4000',
-      'poor': '7000',
-      'for parts': '7000',
-      'for parts/not working': '7000'
+      'brand new':  '1000',
+      'like new':   '2750',
+      'very good':  '4000',
+      'good':       '5000',
+      'acceptable': '6000'
     };
     var condRaw = (listing.condition || 'Good').trim().toLowerCase();
-    var conditionId = conditionMap[condRaw] || '3000';
+    var conditionId = conditionMap[condRaw] || '5000';
 
     // Category mapping
     var categoryMap = {
@@ -193,11 +190,10 @@ app.post('/post-listing', async function(req, res) {
       '<PostalCode>' + postal + '</PostalCode>' +
       '<Quantity>1</Quantity>' +
       '<ShippingDetails>' +
-      '<ShippingType>Flat</ShippingType>' +
+      '<ShippingType>Calculated</ShippingType>' +
       '<ShippingServiceOptions>' +
       '<ShippingServicePriority>1</ShippingServicePriority>' +
       '<ShippingService>USPSMedia</ShippingService>' +
-      '<ShippingServiceCost>3.99</ShippingServiceCost>' +
       '</ShippingServiceOptions>' +
       '</ShippingDetails>' +
       '<ReturnPolicy>' +
@@ -463,7 +459,7 @@ app.get('/', function(req, res) {
   h += '    b+="<div class=\'fl\'>Condition <button style=\'background:none;border:none;color:#7c6bff;cursor:pointer;font-size:0.7rem;padding:0 4px\' onclick=\'toggleCond("+item.id+")\'>edit</button></div>";\n';
   h += '    if(item.editCond){\n';
   h += '      b+="<select class=\'ef\' onchange=\'updCond("+item.id+",this.value)\'>";\n';
-  h += '      ["New","Like New","Good","Acceptable","For Parts/Not Working"].forEach(function(c){b+="<option"+(item.condition===c?" selected":"")+">"+c+"</option>";});\n';
+  h += '      ["Brand New","Like New","Very Good","Good","Acceptable"].forEach(function(c){b+="<option"+(item.condition===c?" selected":"")+">"+c+"</option>";});\n';
   h += '      b+="</select>";\n';
   h += '    } else {\n';
   h += '      b+="<div style=\'background:#12121a;border:1px solid #2a2a3d;border-radius:6px;padding:7px 10px;font-size:0.8rem;margin-bottom:8px;color:#f0f0ff\'>"+item.condition+" &mdash; <span style=\'color:#6b6b8a;font-size:0.72rem\'>See pictures for condition</span></div>";\n';
