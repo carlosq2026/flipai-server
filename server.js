@@ -166,21 +166,13 @@ app.post('/post-listing', async function(req, res) {
     if (listing.topic) specifics += '<NameValueList><Name>Topic</Name><Value>' + esc(listing.topic) + '</Value></NameValueList>';
     if (listing.firstEdition === 'Yes') specifics += '<NameValueList><n>Edition</n><Value>1st Edition</Value></NameValueList>';
 
-    // Weight and package dimensions for calculated shipping
-    var weightXml = '';
+    // Weight and package dimensions
     var totalOz = Math.round((parseFloat(listing.weightLbs) || 1) * 16);
     var lbs = Math.floor(totalOz / 16);
     var oz = totalOz % 16;
     var pkgL = parseFloat(listing.pkgL) || 9;
     var pkgW = parseFloat(listing.pkgW) || 6;
     var pkgH = parseFloat(listing.pkgH) || 3;
-    weightXml = '<ShippingPackageDetails>' +
-      '<WeightMajor unit="lbs">' + lbs + '</WeightMajor>' +
-      '<WeightMinor unit="oz">' + oz + '</WeightMinor>' +
-      '<PackageLength unit="in">' + pkgL + '</PackageLength>' +
-      '<PackageWidth unit="in">' + pkgW + '</PackageWidth>' +
-      '<PackageDepth unit="in">' + pkgH + '</PackageDepth>' +
-      '</ShippingPackageDetails>';
 
     var xml = '<?xml version="1.0" encoding="utf-8"?>' +
       '<AddItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">' +
@@ -200,12 +192,22 @@ app.post('/post-listing', async function(req, res) {
       '<PostalCode>' + postal + '</PostalCode>' +
       '<Quantity>1</Quantity>' +
       '<ShippingDetails>' +
-      '<ShippingType>Flat</ShippingType>' +
+      '<ShippingType>Calculated</ShippingType>' +
       '<ShippingServiceOptions>' +
       '<ShippingServicePriority>1</ShippingServicePriority>' +
       '<ShippingService>USPSMedia</ShippingService>' +
-      '<ShippingServiceCost>3.99</ShippingServiceCost>' +
       '</ShippingServiceOptions>' +
+      '<CalculatedShippingRate>' +
+      '<OriginatingPostalCode>' + postal + '</OriginatingPostalCode>' +
+      '<PackagingHandlingCosts>0.00</PackagingHandlingCosts>' +
+      '</CalculatedShippingRate>' +
+      '<ShippingPackageDetails>' +
+      '<WeightMajor unit="lbs">' + lbs + '</WeightMajor>' +
+      '<WeightMinor unit="oz">' + oz + '</WeightMinor>' +
+      '<PackageLength unit="in">' + pkgL + '</PackageLength>' +
+      '<PackageWidth unit="in">' + pkgW + '</PackageWidth>' +
+      '<PackageDepth unit="in">' + pkgH + '</PackageDepth>' +
+      '</ShippingPackageDetails>' +
       '</ShippingDetails>' +
       '<ReturnPolicy>' +
       '<ReturnsAcceptedOption>ReturnsAccepted</ReturnsAcceptedOption>' +
@@ -213,7 +215,6 @@ app.post('/post-listing', async function(req, res) {
       '<ShippingCostPaidByOption>Buyer</ShippingCostPaidByOption>' +
       '</ReturnPolicy>' +
       '<ConditionID>' + conditionId + '</ConditionID>' +
-      weightXml +
       '<Site>US</Site>' +
       '</Item>' +
       '</AddItemRequest>';
