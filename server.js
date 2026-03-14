@@ -13,7 +13,7 @@ app.use(function(req, res, next) {
 
 app.use(express.json({ limit: '100mb' }));
 
-// ─── VERIFY CLAUDE KEY ────────────────────────────────────────────────────────
+// ─── VERIFY API KEY ───────────────────────────────────────────────────────────
 app.post('/verify', async function(req, res) {
   var apiKey = req.body.apiKey;
   if (!apiKey) return res.status(400).json({ error: 'Missing apiKey' });
@@ -21,29 +21,107 @@ app.post('/verify', async function(req, res) {
     var r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 10, messages: [{ role: 'user', content: 'hi' }] })
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 10, messages: [{ role: 'user', content: 'hi' }] })
     });
     res.json(await r.json());
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── ANALYZE BOOK PHOTOS (single Sonnet call ~$0.03/book) ─────────────────────
+// ─── CLASSIFY PHOTOS BY BOOK ID NUMBER ───────────────────────────────────────
+app.post('/classify-photos', async function(req, res) {
+  var apiKey = req.body.apiKey;
+  var photos = req.body.photos;
+  if (!apiKey || !photos || !photos.length) return res.status(400).json({ error: 'Missing data' });
+  try {
+    var content = [];
+    photos.forEach(function(p, i) {
+      content.push({ type: 'image', source: { type: 'base64', media_type: p.mimeType || 'image/jpeg', data: p.data } });
+      content.push({ type: 'text', text: 'Photo ' + i + ':' });
+    });
+    content.push({ type: 'text', text: 'Look at each photo carefully. Each book has a handwritten number (like 123456) written on a sticky note or piece of paper somewhere in the frame — could be in a corner, on a table nearby, or held up. This number is the BOOK ID and groups photos of the same book together. IMPORTANT: The number may appear in book photos AND in inside-page photos AND on the note card — they all belong to the same book if the number matches. A note card is a plain piece of paper/card with handwritten words like condition, weight, location — it also shows the book number. For each photo output exactly: index,bookId,type — where type is notecard if it looks like a handwritten info card, or photo otherwise. If truly no number visible anywhere in the frame use the same bookId as the previous photo. Example:\n0,123456,photo\n1,123456,photo\n2,123456,photo\n3,123456,notecard\n4,789012,photo\nReply ONLY with these comma-separated lines, nothing else.' });
+    var r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 800, messages: [{ role: 'user', content: content }] })
+    });
+    var d = await r.json();
+    var text = (d.content || []).map(function(c) { return c.text || ''; }).join('');
+    var results = new Array(photos.length).fill(null).map(function() { return { bookId: '?', type: 'photo' }; });
+    text.split('\n').forEach(function(line) {
+      var parts = line.trim().split(',');
+      if (parts.length >= 3) {
+        var idx = parseInt(parts[0]);
+        if (!isNaN(idx) && idx >= 0 && idx < results.length) {
+          results[idx] = { bookId: parts[1].trim(), type: parts[2].trim().toLowerCase() };
+        }
+      }
+    });
+    res.json({ results: results });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── ANALYZE BOOK (Two-stage: Haiku reads photos -> Sonnet prices) ────────────
 app.post('/analyze', async function(req, res) {
   var apiKey = req.body.apiKey;
   var images = req.body.images;
   if (!apiKey || !images || !images.length) return res.status(400).json({ error: 'Missing apiKey or images' });
   try {
-    var content = [];
+    // STAGE 1: Haiku reads all photos and extracts book details
+    var visionContent = [];
     images.forEach(function(img) {
-      content.push({ type: 'image', source: { type: 'base64', media_type: img.mimeType || 'image/jpeg', data: img.data } });
+      visionContent.push({ type: 'image', source: { type: 'base64', media_type: img.mimeType || 'image/jpeg', data: img.data } });
     });
-    content.push({ type: 'text', text: 'You are a professional book reseller. Analyze these book photos for eBay listing. Reply ONLY with raw JSON, no markdown, no explanation:\n{"title":"Full Title","author":"Author Name or Unknown","bookTitle":"Title Only","format":"Hardcover or Paperback or Trade Paperback","language":"English","description":"2-3 sentences describing the book and visible condition","genre":"Fiction or Nonfiction or Mystery etc","publisher":"Publisher Name or unknown","publicationYear":"YYYY or unknown","isbn":"ISBN if visible or unknown","topic":"main subject/topic","condition":"New or Like New or Good or Acceptable","firstEdition":"Yes if 1st edition stated on copyright page or cover, No otherwise","minPrice":5,"maxPrice":25,"avgPrice":12,"suggestedPrice":10}' });
-    var r = await fetch('https://api.anthropic.com/v1/messages', {
+    visionContent.push({ type: 'text', text: 'Extract book details from these photos. Check EVERY photo -- cover, spine, inside title page, copyright page, back cover, note card. AUTHOR: look on cover (above/below title), spine (vertical text), inside title page (centered name), back cover (bio), copyright page (Copyright by [Name]). EDITION: copyright page for First Edition, First Published, 1st Edition, or number line ending in 1. NOTE CARD: last photo may be handwritten with condition, weight lbs/oz, location/shelf code. Reply ONLY raw JSON: {"title":"Full Title","author":"Author Name","format":"Hardcover or Paperback or Trade Paperback","genre":"genre","publisher":"publisher","publicationYear":"4-digit year","isbn":"ISBN or empty","topic":"subject","condition":"condition","weightLbs":"lbs or empty","weightOz":"oz or empty","location":"shelf code or empty","firstEdition":false,"description":"1-2 sentence plot summary only"}' });
+
+    var stage1 = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 600, messages: [{ role: 'user', content: content }] })
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 400, messages: [{ role: 'user', content: visionContent }] })
     });
-    res.json(await r.json());
+    var s1 = await stage1.json();
+    var s1text = (s1.content || []).map(function(c){ return c.text || ''; }).join('');
+    var s1start = s1text.indexOf('{'), s1end = s1text.lastIndexOf('}');
+    var bookData = {};
+    if (s1start >= 0 && s1end >= 0) {
+      try { bookData = JSON.parse(s1text.slice(s1start, s1end + 1)); } catch(e) {}
+    }
+
+    // STAGE 2: Sonnet does ONLY pricing via web search -- no images needed
+    var title = bookData.title || 'Unknown Book';
+    var author = bookData.author || '';
+    var isFirst = bookData.firstEdition || false;
+    var pricingPrompt = 'Price this book for eBay resale using web_search. ' +
+      'Book: "' + title + '" by ' + (author || 'Unknown') + '. ' +
+      (isFirst ? 'THIS IS A 1ST EDITION -- search specifically for first edition sold prices, they are 2x-10x higher. ' : '') +
+      'Search order: (1) eBay SOLD listings "' + title + ' ' + author + (isFirst ? ' first edition' : '') + ' used sold" -- strongest signal. ' +
+      '(2) AbeBooks, Alibris for comparison. (3) Google Books for edition verification. ' +
+      'HAPPY STEAL FORMULA: collect sold prices, strip top/bottom 10% outliers, median = TRUE value. ' +
+      'suggestedPrice = 85% of TRUE value rounded DOWN to .95 or .99 ending. ' +
+      'minPrice = 70% of TRUE. maxPrice = 110% of TRUE. avgPrice = TRUE median. ' +
+      (isFirst ? 'Set firstEditionPremium true. ' : '') +
+      'Reply ONLY raw JSON: {"suggestedPrice":10.95,"minPrice":7,"maxPrice":15,"avgPrice":12,"firstEditionPremium":false}';
+
+    var stage2 = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 400,
+        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+        messages: [{ role: 'user', content: pricingPrompt }]
+      })
+    });
+    var s2 = await stage2.json();
+    var s2text = (s2.content || []).filter(function(c){ return c.type === 'text'; }).map(function(c){ return c.text || ''; }).join('');
+    var s2start = s2text.indexOf('{'), s2end = s2text.lastIndexOf('}');
+    var priceData = { suggestedPrice: 9.95, minPrice: 5, maxPrice: 20, avgPrice: 12, firstEditionPremium: false };
+    if (s2start >= 0 && s2end >= 0) {
+      try { priceData = Object.assign(priceData, JSON.parse(s2text.slice(s2start, s2end + 1))); } catch(e) {}
+    }
+
+    var merged = Object.assign({}, bookData, priceData);
+    res.json({ content: [{ type: 'text', text: JSON.stringify(merged) }] });
+
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -54,12 +132,17 @@ async function uploadPhotoToEbay(base64Data, mimeType, appId, token) {
   var ext = (mimeType || 'image/jpeg').split('/')[1] || 'jpg';
   if (ext === 'jpeg') ext = 'jpg';
   var CRLF = '\r\n';
-  var xmlPayload = '<?xml version="1.0" encoding="utf-8"?>' +
+
+  // XML Payload part -- auth token goes in the body, NOT just headers
+  // CRITICAL: boundary lines use exactly two ASCII hyphens: --
+  // Never use em-dash or en-dash characters here
+  var xmlPayload =
+    '<?xml version="1.0" encoding="utf-8"?>' +
     '<UploadSiteHostedPicturesRequest xmlns="urn:ebay:apis:eBLBaseComponents">' +
     '<RequesterCredentials><eBayAuthToken>' + token + '</eBayAuthToken></RequesterCredentials>' +
-    '<PictureName>flipai_book</PictureName>' +
-    '<PictureSet>Supersize</PictureSet>' +
+    '<PictureName>book</PictureName>' +
     '</UploadSiteHostedPicturesRequest>';
+
   var xmlPart = Buffer.from(
     '--' + boundary + CRLF +
     'Content-Disposition: form-data; name="XML Payload"' + CRLF +
@@ -67,15 +150,20 @@ async function uploadPhotoToEbay(base64Data, mimeType, appId, token) {
     xmlPayload + CRLF,
     'utf8'
   );
+
   var imgHeader = Buffer.from(
     '--' + boundary + CRLF +
     'Content-Disposition: form-data; name="image"; filename="book.' + ext + '"' + CRLF +
     'Content-Type: ' + (mimeType || 'image/jpeg') + CRLF +
     'Content-Transfer-Encoding: binary' + CRLF + CRLF,
-    'utf8'
+    'binary'
   );
-  var imgFooter = Buffer.from(CRLF + '--' + boundary + '--' + CRLF, 'utf8');
+
+  // Closing boundary: --boundary--
+  var imgFooter = Buffer.from(CRLF + '--' + boundary + '--' + CRLF, 'binary');
+
   var fullBody = Buffer.concat([xmlPart, imgHeader, imgBuffer, imgFooter]);
+
   var r = await fetch('https://api.ebay.com/ws/api.dll', {
     method: 'POST',
     headers: {
@@ -88,10 +176,11 @@ async function uploadPhotoToEbay(base64Data, mimeType, appId, token) {
     },
     body: fullBody
   });
+
   var text = await r.text();
+  console.log('Photo upload response:', text.substring(0, 400));
   var match = text.match(/<FullURL>(.*?)<\/FullURL>/);
   if (match) return match[1];
-  console.log('Photo upload failed:', text.substring(0, 400));
   throw new Error('Photo upload failed: ' + text.substring(0, 150));
 }
 
@@ -99,394 +188,487 @@ async function uploadPhotoToEbay(base64Data, mimeType, appId, token) {
 app.post('/post-listing', async function(req, res) {
   var listing = req.body.listing;
   var images = req.body.images || [];
-  if (!listing) return res.status(400).json({ success: false, message: 'No listing data' });
-  var token = process.env.EBAY_USER_TOKEN;
   var appId = process.env.EBAY_APP_ID;
-  var postal = process.env.POSTAL_CODE || '14701';
-  if (!token) return res.status(500).json({ success: false, message: 'EBAY_USER_TOKEN not set in Railway env vars' });
+  var token = req.body.ebayToken || process.env.EBAY_USER_TOKEN || '';
+  var postalCode = process.env.POSTAL_CODE || '14701';
+  if (!appId) return res.status(400).json({ error: 'Missing EBAY_APP_ID in Railway environment' });
 
   try {
     // Upload all photos in parallel
-    var uploadPromises = images.slice(0, 12).map(function(img) {
-      return uploadPhotoToEbay(img.data, img.mimeType, appId, token).catch(function(e) {
-        console.log('Photo upload skipped:', e.message);
-        return null;
-      });
-    });
-    var uploadResults = await Promise.all(uploadPromises);
-    var uploadedUrls = uploadResults.filter(Boolean);
+    var uploadSlots = images.slice(0, 12);
+    var photoUrls = (await Promise.all(
+      uploadSlots.map(function(img) {
+        return uploadPhotoToEbay(img.data, img.mimeType, appId, token)
+          .catch(function(e) { console.log('Photo upload error:', e.message); return null; });
+      })
+    )).filter(Boolean);
 
-    var pictureXml = uploadedUrls.length > 0
-      ? '<PictureDetails>' + uploadedUrls.map(function(u) { return '<PictureURL>' + u + '</PictureURL>'; }).join('') + '</PictureDetails>'
-      : '';
+    function esc(s) { return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
     // Condition mapping
-    var conditionMap = {
-      'new': '1000',
-      'like new': '2750',
-      'very good': '2750',
-      'good': '3000',
-      'acceptable': '4000',
-      'poor': '7000',
-      'for parts': '7000',
-      'for parts/not working': '7000'
-    };
-    var conditionId = conditionMap[(listing.condition || 'good').toLowerCase()] || '3000';
+    var condMap = { 'new': '1000', 'like new': '2750', 'very good': '2750', 'good': '3000', 'acceptable': '4000', 'for parts': '7000' };
+    var condText = (listing.condition || 'good').toLowerCase();
+    var condId = '3000';
+    Object.keys(condMap).forEach(function(k) { if (condText.includes(k)) condId = condMap[k]; });
 
-    // Category mapping
-    var categoryMap = {
-      'fiction': '261186',
-      'nonfiction': '11232',
-      'non-fiction': '11232',
-      'children': '11721',
-      "children's": '11721',
-      'comics': '259104',
-      'graphic novel': '259104'
-    };
-    var categoryId = categoryMap[(listing.genre || '').toLowerCase()] || '261186';
+    // Build description
+    var conditionLine = listing.condition ? 'Condition: ' + listing.condition + '.\n\n' : '';
+    var fullDescription = conditionLine + (listing.description || '');
+    if (listing.location) fullDescription += '\n\nLocation: ' + listing.location;
 
     // Item specifics
     var specifics = '';
-    specifics += '<NameValueList><Name>Author</Name><Value>' + esc(listing.author || 'Unknown') + '</Value></NameValueList>';
-    if (listing.bookTitle) specifics += '<NameValueList><Name>Book Title</Name><Value>' + esc(listing.bookTitle) + '</Value></NameValueList>';
-    if (listing.format) specifics += '<NameValueList><Name>Format</Name><Value>' + esc(listing.format) + '</Value></NameValueList>';
-    specifics += '<NameValueList><Name>Language</Name><Value>English</Value></NameValueList>';
     if (listing.genre) specifics += '<NameValueList><Name>Genre</Name><Value>' + esc(listing.genre) + '</Value></NameValueList>';
-    if (listing.publisher && listing.publisher !== 'unknown') specifics += '<NameValueList><Name>Publisher</Name><Value>' + esc(listing.publisher) + '</Value></NameValueList>';
-    if (listing.publicationYear && listing.publicationYear !== 'unknown') specifics += '<NameValueList><Name>Publication Year</Name><Value>' + esc(listing.publicationYear) + '</Value></NameValueList>';
-    if (listing.isbn && listing.isbn !== 'unknown') specifics += '<NameValueList><Name>ISBN</Name><Value>' + esc(listing.isbn) + '</Value></NameValueList>';
+    if (listing.publisher) specifics += '<NameValueList><Name>Publisher</Name><Value>' + esc(listing.publisher) + '</Value></NameValueList>';
+    if (listing.publicationYear) specifics += '<NameValueList><Name>Publication Year</Name><Value>' + esc(listing.publicationYear) + '</Value></NameValueList>';
+    if (listing.isbn) specifics += '<NameValueList><Name>ISBN</Name><Value>' + esc(listing.isbn) + '</Value></NameValueList>';
     if (listing.topic) specifics += '<NameValueList><Name>Topic</Name><Value>' + esc(listing.topic) + '</Value></NameValueList>';
-    if (listing.firstEdition === 'Yes') specifics += '<NameValueList><n>Edition</n><Value>1st Edition</Value></NameValueList>';
+    if (listing.firstEdition) specifics += '<NameValueList><Name>Special Attributes</Name><Value>1st Edition</Value></NameValueList>';
 
-    // Weight for shipping
+    // Photos XML
+    var pictureXml = photoUrls.length ? '<PictureDetails>' + photoUrls.map(function(u) { return '<PictureURL>' + esc(u) + '</PictureURL>'; }).join('') + '</PictureDetails>' : '';
+
+    // Weight
     var weightXml = '';
     if (listing.weightLbs || listing.weightOz) {
       weightXml = '<ShippingPackageDetails>' +
-        '<WeightMajor unit="lbs">' + (parseInt(listing.weightLbs) || 0) + '</WeightMajor>' +
-        '<WeightMinor unit="oz">' + (parseInt(listing.weightOz) || 0) + '</WeightMinor>' +
+        '<WeightMajor unit="lbs">' + (listing.weightLbs || '0') + '</WeightMajor>' +
+        '<WeightMinor unit="oz">' + (listing.weightOz || '0') + '</WeightMinor>' +
+        '<PackageDepth unit="in">7</PackageDepth>' +
+        '<PackageLength unit="in">7</PackageLength>' +
+        '<PackageWidth unit="in">7</PackageWidth>' +
         '</ShippingPackageDetails>';
     }
 
-    var xml = '<?xml version="1.0" encoding="utf-8"?>' +
+    var categoryId = (function(){
+      var gen = (listing.genre || '').toLowerCase();
+      if (gen.includes('child')) return '11721';
+      if (gen.includes('comic') || gen.includes('manga')) return '259104';
+      if (gen.includes('fiction') || gen.includes('mystery') || gen.includes('thriller') || gen.includes('romance')) return '261186';
+      if (gen.includes('history') || gen.includes('biography') || gen.includes('science') || gen.includes('self')) return '11232';
+      return '280';
+    })();
+
+    var xml =
+      '<?xml version="1.0" encoding="utf-8"?>' +
       '<AddItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">' +
       '<RequesterCredentials><eBayAuthToken>' + token + '</eBayAuthToken></RequesterCredentials>' +
       '<Item>' +
-      '<Title>' + esc(listing.title) + '</Title>' +
-      '<Description><![CDATA[' + (listing.description || '') + ']]></Description>' +
-      pictureXml +
-      '<ItemSpecifics>' + specifics + '</ItemSpecifics>' +
+      '<Title>' + esc((listing.title || 'Book').substring(0, 80)) + '</Title>' +
+      '<Description><![CDATA[' + fullDescription + ']]></Description>' +
       '<PrimaryCategory><CategoryID>' + categoryId + '</CategoryID></PrimaryCategory>' +
-      '<StartPrice>' + (parseFloat(listing.price) || 9.99) + '</StartPrice>' +
+      '<StartPrice>' + (parseFloat(listing.price) || 9.99).toFixed(2) + '</StartPrice>' +
+      '<Quantity>1</Quantity>' +
+      '<ListingType>FixedPriceItem</ListingType>' +
+      '<ListingDuration>GTC</ListingDuration>' +
       '<Country>US</Country>' +
       '<Currency>USD</Currency>' +
-      '<DispatchTimeMax>3</DispatchTimeMax>' +
-      '<ListingDuration>GTC</ListingDuration>' +
-      '<ListingType>FixedPriceItem</ListingType>' +
-      '<PostalCode>' + postal + '</PostalCode>' +
-      '<Quantity>1</Quantity>' +
+      '<Location>' + esc(postalCode) + '</Location>' +
+      '<PostalCode>' + esc(postalCode) + '</PostalCode>' +
+      '<ConditionID>' + condId + '</ConditionID>' +
+      '<ItemSpecifics>' + specifics + '</ItemSpecifics>' +
+      pictureXml +
       '<ShippingDetails>' +
-      '<ShippingType>Flat</ShippingType>' +
-      '<ShippingServiceOptions>' +
-      '<ShippingServicePriority>1</ShippingServicePriority>' +
-      '<ShippingService>USPSMedia</ShippingService>' +
-      '<ShippingServiceCost>3.99</ShippingServiceCost>' +
-      '</ShippingServiceOptions>' +
+        '<ShippingType>Calculated</ShippingType>' +
+        '<ShippingServiceOptions>' +
+          '<ShippingServicePriority>1</ShippingServicePriority>' +
+          '<ShippingService>USPSMedia</ShippingService>' +
+        '</ShippingServiceOptions>' +
       '</ShippingDetails>' +
-      '<ReturnPolicy>' +
-      '<ReturnsAcceptedOption>ReturnsAccepted</ReturnsAcceptedOption>' +
-      '<ReturnsWithinOption>Days_30</ReturnsWithinOption>' +
-      '<ShippingCostPaidByOption>Buyer</ShippingCostPaidByOption>' +
-      '</ReturnPolicy>' +
-      '<ConditionID>' + conditionId + '</ConditionID>' +
       weightXml +
-      '<Site>US</Site>' +
-      '</Item>' +
-      '</AddItemRequest>';
+      '<DispatchTimeMax>3</DispatchTimeMax>' +
+      '<ReturnPolicy>' +
+        '<ReturnsAcceptedOption>ReturnsAccepted</ReturnsAcceptedOption>' +
+        '<RefundOption>MoneyBack</RefundOption>' +
+        '<ReturnsWithinOption>Days_30</ReturnsWithinOption>' +
+        '<ShippingCostPaidByOption>Buyer</ShippingCostPaidByOption>' +
+      '</ReturnPolicy>' +
+      '</Item></AddItemRequest>';
 
-    var r = await fetch('https://api.ebay.com/ws/api.dll', {
+    var ebayRes = await fetch('https://api.ebay.com/ws/api.dll', {
       method: 'POST',
       headers: {
         'Content-Type': 'text/xml',
         'X-EBAY-API-SITEID': '0',
         'X-EBAY-API-COMPATIBILITY-LEVEL': '967',
         'X-EBAY-API-CALL-NAME': 'AddItem',
-        'X-EBAY-API-APP-NAME': appId || ''
+        'X-EBAY-API-APP-NAME': appId
       },
       body: xml
     });
-    var text = await r.text();
-    if (text.includes('<Ack>Success</Ack>') || text.includes('<Ack>Warning</Ack>')) {
-      var match = text.match(/<ItemID>(\d+)<\/ItemID>/);
-      res.json({ success: true, itemId: match ? match[1] : 'unknown', url: 'https://www.ebay.com/itm/' + (match ? match[1] : '') });
+    var ebayText = await ebayRes.text();
+    var itemId = (ebayText.match(/<ItemID>(\d+)<\/ItemID>/) || [])[1];
+    var ack = (ebayText.match(/<Ack>(.*?)<\/Ack>/) || [])[1];
+    var errMsg = (ebayText.match(/<LongMessage>(.*?)<\/LongMessage>/) || [])[1];
+    if (itemId && ack !== 'Failure') {
+      res.json({ success: true, itemId: itemId, url: 'https://www.ebay.com/itm/' + itemId });
     } else {
-      var errMatches = text.match(/<LongMessage>(.*?)<\/LongMessage>/g) || [];
-      var allErrors = errMatches.map(function(m){ return m.replace(/<\/?LongMessage>/g,''); }).join(' | ');
-      console.log('eBay AddItem failed:', text.substring(0, 800));
-      res.status(400).json({ success: false, message: allErrors || 'eBay error', raw: text.substring(0, 400) });
+      res.json({ success: false, message: errMsg || ack || 'Unknown eBay error', raw: ebayText.substring(0, 500) });
     }
-  } catch(e) {
-    console.log('post-listing error:', e.message);
-    res.status(500).json({ success: false, message: e.message });
-  }
-});
 
-function esc(s) {
-  return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
 
 // ─── FRONTEND ─────────────────────────────────────────────────────────────────
 app.get('/', function(req, res) {
-  res.setHeader('Content-Type', 'text/html');
-  var h = '';
-  h += '<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FlipAI - Bookslayer</title>';
-  h += '<style>';
+  var h = '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FlipAI Bookslayer</title><style>';
   h += '*{box-sizing:border-box;margin:0;padding:0}';
-  h += 'body{background:#0a0a0f;color:#f0f0ff;font-family:monospace;padding:24px;max-width:1300px;margin:0 auto}';
-  h += 'h1{font-size:1.8rem;font-weight:800;color:#00e5a0;margin-bottom:4px}';
-  h += '.subtitle{font-size:0.8rem;color:#6b6b8a;margin-bottom:24px}';
-  h += '.section{background:#1a1a26;border:1px solid #2a2a3d;border-radius:12px;padding:20px;margin-bottom:20px}';
-  h += '.section h2{font-size:0.75rem;color:#00e5a0;text-transform:uppercase;letter-spacing:.1em;margin-bottom:14px}';
-  h += 'label{display:block;font-size:0.7rem;color:#6b6b8a;text-transform:uppercase;margin-bottom:4px}';
-  h += 'input,select{width:100%;background:#12121a;border:1px solid #2a2a3d;border-radius:8px;padding:10px;color:#f0f0ff;font-family:monospace;margin-bottom:12px;font-size:0.85rem}';
-  h += '.btn{background:#00e5a0;color:#0a0a0f;border:none;border-radius:8px;padding:11px 22px;font-weight:bold;font-size:0.85rem;cursor:pointer;margin-right:8px;margin-bottom:8px;transition:filter .15s}';
-  h += '.btn:hover{filter:brightness(1.15)}';
-  h += '.btn-purple{background:#7c6bff;color:white}';
-  h += '.btn-outline{background:transparent;color:#00e5a0;border:1px solid #00e5a0}';
-  h += '.btn-orange{background:#ff6b35;color:white}';
+  h += 'body{background:#0a0a0f;color:#f0f0ff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh}';
+  h += '.header{background:linear-gradient(135deg,#1a0533,#0d1f3c);padding:18px 20px;text-align:center;border-bottom:1px solid #2a2a3d}';
+  h += '.header h1{font-size:1.5rem;font-weight:800;background:linear-gradient(90deg,#a855f7,#3b82f6);-webkit-background-clip:text;-webkit-text-fill-color:transparent}';
+  h += '.header p{font-size:0.75rem;color:#6b6b8a;margin-top:2px}';
+  h += '.keys{background:#12121a;border:1px solid #2a2a3d;border-radius:12px;padding:14px;margin:16px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}';
+  h += 'input.ki{flex:1;min-width:140px;background:#0a0a0f;border:1px solid #3a3a5c;border-radius:8px;color:#f0f0ff;padding:8px 10px;font-size:0.8rem}';
+  h += '.btn{border:none;border-radius:8px;padding:9px 16px;font-size:0.8rem;font-weight:600;cursor:pointer;transition:all .15s}';
+  h += '.btn-green{background:#00e5a0;color:#0a0a0f}.btn-green:hover{background:#00c88c}';
+  h += '.btn-purple{background:linear-gradient(135deg,#a855f7,#3b82f6);color:#fff}';
+  h += '.btn-red{background:#ff3b5c;color:#fff}';
+  h += '.btn-outline{background:transparent;border:1px solid #3a3a5c;color:#a0a0c0}.btn-outline:hover{border-color:#a855f7;color:#a855f7}';
   h += '.btn-sm{padding:6px 12px;font-size:0.75rem}';
-  h += '.status{font-size:0.8rem;margin-top:8px;color:#00e5a0;min-height:18px}';
-  h += '.status.err{color:#ff6b35}';
-  h += '.drop{border:2px dashed #2a2a3d;border-radius:16px;padding:60px 40px;text-align:center;cursor:pointer;position:relative;background:#12121a;transition:all .2s;margin-bottom:20px}';
-  h += '.drop:hover,.drop.over{border-color:#00e5a0;background:rgba(0,229,160,.03)}';
-  h += '.drop input[type=file]{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer}';
-  h += '.drop-icon{font-size:3rem;margin-bottom:12px}';
-  h += '.drop h2{font-size:1.3rem;font-weight:800;color:#f0f0ff;margin-bottom:8px;font-family:monospace}';
-  h += '.drop p{color:#6b6b8a;font-size:0.85rem;line-height:1.6}';
-  h += '.drop .tip{background:#1a1a26;border:1px solid #2a2a3d;border-radius:8px;padding:12px 16px;margin-top:16px;font-size:0.78rem;color:#00e5a0;text-align:left}';
-  h += '.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px}';
-  h += '.stat{background:#1a1a26;border:1px solid #2a2a3d;border-radius:10px;padding:14px;text-align:center}';
-  h += '.stat-num{font-size:1.6rem;font-weight:800;color:#00e5a0;font-family:monospace}';
-  h += '.stat-num.orange{color:#ff6b35}.stat-num.purple{color:#7c6bff}.stat-num.yellow{color:#ffb800}';
-  h += '.stat-lbl{font-size:0.65rem;color:#6b6b8a;text-transform:uppercase;margin-top:4px}';
-  h += '.prog-section{background:#1a1a26;border:1px solid #2a2a3d;border-radius:10px;padding:16px;margin-bottom:20px}';
-  h += '.prog-track{background:#12121a;border-radius:100px;height:8px;margin:10px 0;overflow:hidden}';
-  h += '.prog-fill{height:100%;background:linear-gradient(90deg,#00e5a0,#7c6bff);border-radius:100px;transition:width .4s}';
-  h += '.prog-lbl{font-size:0.78rem;color:#6b6b8a}';
-  h += '.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}';
-  h += '.card{background:#1a1a26;border:1px solid #2a2a3d;border-radius:12px;overflow:hidden;transition:border-color .2s}';
-  h += '.card.done{border-color:#00e5a0}.card.error{border-color:#ff6b35}.card.processing{border-color:#7c6bff}.card.posting{border-color:#ffb800}.card.posted{border-color:#00e5a0;opacity:.7}';
-  h += '.thumb-strip{display:flex;gap:3px;padding:6px;background:#0a0a0f;flex-wrap:wrap}';
-  h += '.thumb{width:52px;height:52px;object-fit:cover;border-radius:5px;border:2px solid transparent;cursor:pointer;transition:border-color .15s}';
-  h += '.thumb.main{border-color:#00e5a0}';
-  h += '.main-img{width:100%;height:165px;object-fit:cover;display:block}';
-  h += '.card-body{padding:12px}';
-  h += '.card-meta{font-size:0.68rem;color:#6b6b8a;margin-bottom:8px}';
-  h += '.price-box{background:#12121a;border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:0.76rem}';
-  h += '.price-big{color:#ffb800;font-size:0.95rem;font-weight:bold}';
-  h += '.ef{width:100%;background:#12121a;border:1px solid #2a2a3d;border-radius:5px;padding:7px 9px;color:#f0f0ff;font-family:monospace;font-size:0.75rem;margin-bottom:6px}';
-  h += '.ef-row{display:grid;grid-template-columns:1fr 1fr;gap:6px}';
-  h += '.fl{font-size:0.63rem;color:#6b6b8a;text-transform:uppercase;margin-bottom:2px}';
-  h += '.actions{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}';
-  h += '.toast-wrap{position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;max-width:480px}';
-  h += '.toast{background:#1a1a26;border:1px solid #00e5a0;border-radius:8px;padding:12px 16px;font-size:0.82rem;word-break:break-word}';
-  h += '.toast.err{border-color:#ff6b35}';
-  h += '.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px}';
-  h += '.modal{background:#1a1a26;border:1px solid #00e5a0;border-radius:16px;padding:24px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto}';
-  h += '.modal h3{font-size:1.1rem;font-weight:800;color:#00e5a0;margin-bottom:4px}';
-  h += '.modal .sub{font-size:0.75rem;color:#6b6b8a;margin-bottom:16px}';
-  h += '.modal-img{width:100%;height:220px;object-fit:contain;background:#12121a;border-radius:10px;margin-bottom:14px}';
-  h += '.modal-thumbs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}';
-  h += '.modal-thumb{width:58px;height:58px;object-fit:cover;border-radius:6px;border:2px solid #2a2a3d;cursor:pointer}';
-  h += '.modal-thumb.sel{border-color:#00e5a0}';
-  h += '.modal-info{background:#12121a;border-radius:8px;padding:12px;margin-bottom:14px;font-size:0.8rem}';
-  h += '.modal-info .row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #2a2a3d}';
-  h += '.modal-info .row:last-child{border:none}';
-  h += '.modal-info .lbl{color:#6b6b8a}.modal-info .val{color:#f0f0ff;font-weight:bold;text-align:right;max-width:65%}';
-  h += '.modal-actions{display:flex;gap:10px}';
+  h += '.key-status{font-size:0.75rem;color:#00e5a0;margin-left:4px}';
+  h += '.drop{border:2px dashed #3a3a5c;border-radius:16px;margin:0 16px 16px;padding:40px 20px;text-align:center;cursor:pointer;transition:border-color .2s;background:#0d0d17}';
+  h += '.drop:hover,.drop.drag{border-color:#a855f7;background:#12091f}';
+  h += '.drop h2{font-size:1.1rem;font-weight:700;margin-bottom:6px}';
+  h += '.drop p{font-size:0.78rem;color:#6b6b8a;margin-bottom:12px}';
+  h += '.tip{background:#0d1f0d;border:1px solid #1a3a1a;border-radius:8px;padding:10px 14px;font-size:0.75rem;color:#4ade80;margin-top:10px;text-align:left;line-height:1.5}';
+  h += '.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:0 16px 12px;text-align:center}';
+  h += '.stat{background:#12121a;border:1px solid #2a2a3d;border-radius:10px;padding:10px 4px}';
+  h += '.stat-val{font-size:1.2rem;font-weight:800;color:#a855f7}';
+  h += '.stat-val.green{color:#00e5a0}.stat-val.gold{color:#ffb800}.stat-val.blue{color:#3b82f6}';
+  h += '.stat-lbl{font-size:0.6rem;color:#6b6b8a;text-transform:uppercase;letter-spacing:.5px}';
+  h += '.controls{display:flex;gap:8px;flex-wrap:wrap;padding:0 16px 12px;align-items:center}';
+  h += '.gap-info{font-size:0.72rem;color:#6b6b8a;flex:1}';
+  h += '.prog{background:#12121a;border:1px solid #2a2a3d;border-radius:10px;margin:0 16px 12px;padding:10px}';
+  h += '.prog-bar{height:6px;background:#2a2a3d;border-radius:3px;overflow:hidden;margin-bottom:6px}';
+  h += '.prog-fill{height:100%;background:linear-gradient(90deg,#a855f7,#3b82f6);border-radius:3px;transition:width .3s}';
+  h += '.prog-lbl{font-size:0.72rem;color:#a0a0c0}';
+  h += '.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;padding:0 16px 80px}';
+  h += '.card{background:#12121a;border:1px solid #2a2a3d;border-radius:14px;overflow:hidden;transition:border-color .2s}';
+  h += '.card.processing{border-color:#3b82f6;animation:pulse 1.5s infinite}';
+  h += '.card.done{border-color:#00e5a0}';
+  h += '.card.error{border-color:#ff3b5c}';
+  h += '.card.posted{border-color:#a855f7}';
+  h += '.card.posting{border-color:#ffb800;animation:pulse 1.5s infinite}';
+  h += '@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}';
+  h += '.main-img{width:100%;height:200px;object-fit:cover;background:#0a0a0f;cursor:pointer}';
+  h += '.thumbs{display:flex;gap:4px;padding:6px 8px;overflow-x:auto;background:#0d0d17}';
+  h += '.thumb{width:44px;height:44px;object-fit:cover;border-radius:5px;cursor:pointer;border:2px solid transparent;flex-shrink:0}';
+  h += '.thumb.sel{border-color:#a855f7}';
+  h += '.card-body{padding:10px 12px}';
+  h += '.book-num{font-size:0.65rem;color:#6b6b8a;margin-bottom:4px}';
+  h += '.book-title{font-size:0.9rem;font-weight:700;color:#f0f0ff;margin-bottom:2px;line-height:1.3}';
+  h += '.book-author{font-size:0.75rem;color:#a0a0c0;margin-bottom:6px}';
+  h += '.fl{font-size:0.65rem;color:#6b6b8a;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px;display:flex;align-items:center;gap:4px}';
+  h += '.ef{width:100%;background:#0a0a0f;border:1px solid #3a3a5c;border-radius:6px;color:#f0f0ff;padding:6px 8px;font-size:0.78rem;margin-bottom:6px}';
+  h += '.ef-val{background:#12121a;border:1px solid #2a2a3d;border-radius:6px;padding:7px 9px;color:#f0f0ff;font-size:0.78rem;margin-bottom:6px;min-height:32px}';
+  h += '.price-edit{color:#ffb800;font-weight:bold;font-size:0.95rem}';
+  h += '.edit-btn{background:none;border:none;cursor:pointer;font-size:0.75rem;padding:0 3px;opacity:0.5;transition:opacity .15s}.edit-btn:hover{opacity:1}';
+  h += '.price-box{background:#0d1f0d;border:1px solid #1a3a1a;border-radius:8px;padding:8px 10px;margin-bottom:8px;font-size:0.72rem;color:#6b6b8a}';
+  h += '.price-big{font-size:1.1rem;font-weight:800;color:#00e5a0}';
+  h += '.badge-1st{display:inline-block;background:#ffb800;color:#0a0a0f;font-size:0.65rem;font-weight:800;padding:2px 8px;border-radius:100px;margin-top:4px}';
+  h += '.badge-loc{font-size:0.7rem;color:#6b6b8a;margin-top:4px}';
+  h += '.status-bar{font-size:0.7rem;padding:4px 10px;text-align:center}';
+  h += '.status-bar.processing{background:#0d1a2e;color:#3b82f6}';
+  h += '.status-bar.error{background:#1f0d10;color:#ff3b5c}';
+  h += '.status-bar.posted{background:#1a0533;color:#a855f7}';
+  h += '.status-bar.posting{background:#1f1700;color:#ffb800}';
+  h += '.actions{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}';
+  h += '.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:100;align-items:center;justify-content:center;padding:20px}';
+  h += '.modal{background:#12121a;border:1px solid #3a3a5c;border-radius:16px;padding:20px;max-width:400px;width:100%}';
+  h += '.modal h3{font-size:1rem;font-weight:700;margin-bottom:4px}';
+  h += '.modal-sub{font-size:0.75rem;color:#6b6b8a;margin-bottom:12px}';
+  h += '.modal-img{width:100%;height:200px;object-fit:cover;border-radius:10px;margin-bottom:8px}';
+  h += '.modal-thumbs{display:flex;gap:4px;overflow-x:auto;margin-bottom:12px}';
+  h += '.modal-thumb{width:50px;height:50px;object-fit:cover;border-radius:6px;cursor:pointer;border:2px solid transparent;flex-shrink:0}';
+  h += '.modal-thumb.sel{border-color:#a855f7}';
+  h += '.modal-info{font-size:0.78rem;color:#a0a0c0;margin-bottom:12px;line-height:1.6}';
+  h += '.modal-btns{display:flex;gap:8px}';
+  h += '.toasts{position:fixed;bottom:20px;right:16px;z-index:200;display:flex;flex-direction:column;gap:6px}';
+  h += '.toast{background:#1a1a2e;border:1px solid #3a3a5c;border-radius:8px;padding:10px 14px;font-size:0.8rem;color:#f0f0ff;animation:fadeIn .2s}';
+  h += '.toast.err{border-color:#ff3b5c;color:#ff3b5c}';
+  h += '@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}';
   h += '</style></head><body>';
 
-  h += '<h1>FlipAI \u2014 Bookslayer</h1>';
-  h += '<div class="subtitle">Dump your entire camera roll \u2014 AI groups photos by timestamp gap \u2192 analyze \u2192 post to eBay</div>';
+  h += '<div class="header"><h1>\uD83D\uDCDA FlipAI Bookslayer</h1><p>AI-powered eBay book listing</p></div>';
 
-  h += '<div class="section"><h2>\ud83d\udd11 Step 1 \u2014 Enter Keys</h2>';
-  h += '<label>Claude API Key</label><input type="password" id="apiKey" placeholder="sk-ant-api03-...">';
-  h += '<label>eBay App ID</label><input type="text" id="ebayKey" placeholder="YOURNAME-App-PRD-...">';
-  h += '<button class="btn" onclick="verify()">Verify Keys</button>';
-  h += '<div class="status" id="keyStatus"></div></div>';
+  h += '<div class="keys">';
+  h += '<input class="ki" id="ckInput" placeholder="Claude API Key (sk-ant-...)" type="password">';
+  h += '<input class="ki" id="ekInput" placeholder="eBay Token" type="password">';
+  h += '<button class="btn btn-green" onclick="verifyKeys()">Verify Keys</button>';
+  h += '<span class="key-status" id="keyStatus"></span>';
+  h += '</div>';
 
-  h += '<div class="drop" id="drop">';
-  h += '<input type="file" accept="image/*" multiple onchange="handleFiles(this.files)">';
-  h += '<div class="drop-icon">\ud83d\udcf1</div>';
+  h += '<div class="drop" id="dropZone">';
+  h += '<div style="font-size:2rem;margin-bottom:8px">\uD83D\uDCF1</div>';
   h += '<h2>Dump Your Entire Camera Roll Here</h2>';
-  h += '<p>Select ALL book photos at once \u2014 hundreds at a time<br>FlipAI auto-groups them into books by timestamp</p>';
-  h += '<div class="tip">\ud83d\udcf8 <strong>How to shoot:</strong> Take 3\u20139 photos per book, then pause 30+ seconds before the next book. That gap = new book.</div>';
+  h += '<p>Select ALL your book photos at once \u2014 AI groups them by the number on your sticky note</p>';
+  h += '<input type="file" id="fileInput" multiple accept="image/*" style="display:none">';
+  h += '<button class="btn btn-outline" onclick="document.getElementById(\'fileInput\').click()">Select Photos</button>';
+  h += '<div class="tip">\uD83D\uDCF8 <strong>How to shoot:</strong> Write a unique number (e.g. <strong>123456</strong>) on a sticky note. Keep it visible in ALL photos of that book. Last photo = note card with same number + condition + weight + location. Different number for each book. Dump entire camera roll \u2014 AI groups by number regardless of order. \u2702\uFE0F Split or \uD83D\uDD17 Merge to fix any mistakes.</div>';
   h += '</div>';
 
   h += '<div id="statsWrap" style="display:none">';
   h += '<div class="stats">';
-  h += '<div class="stat"><div class="stat-num" id="sPhotos">0</div><div class="stat-lbl">Photos</div></div>';
-  h += '<div class="stat"><div class="stat-num orange" id="sBooks">0</div><div class="stat-lbl">Books</div></div>';
-  h += '<div class="stat"><div class="stat-num purple" id="sAnalyzed">0</div><div class="stat-lbl">Analyzed</div></div>';
-  h += '<div class="stat"><div class="stat-num yellow" id="sValue">$0</div><div class="stat-lbl">Est. Value</div></div>';
-  h += '<div class="stat"><div class="stat-num" id="sPosted">0</div><div class="stat-lbl">Posted</div></div>';
+  h += '<div class="stat"><div class="stat-val blue" id="sPhotos">0</div><div class="stat-lbl">Photos</div></div>';
+  h += '<div class="stat"><div class="stat-val" id="sBooks">0</div><div class="stat-lbl">Books</div></div>';
+  h += '<div class="stat"><div class="stat-val green" id="sAnalyzed">0</div><div class="stat-lbl">Analyzed</div></div>';
+  h += '<div class="stat"><div class="stat-val gold" id="sValue">$0</div><div class="stat-lbl">Est. Value</div></div>';
+  h += '<div class="stat"><div class="stat-val" id="sPosted">0</div><div class="stat-lbl">Posted</div></div>';
   h += '</div>';
-  h += '<div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap">';
-  h += '<button class="btn" onclick="analyzeAll()">Analyze All</button>';
+  h += '<div class="controls">';
+  h += '<button class="btn btn-green" onclick="analyzeAll()">Analyze All</button>';
   h += '<button class="btn btn-purple" onclick="postAll()">Post All to eBay</button>';
-  h += '<button class="btn btn-outline" onclick="clearAll()">Clear All</button>';
-  h += '<span id="gapInfo" style="font-size:0.75rem;color:#6b6b8a;align-self:center"></span>';
+  h += '<button class="btn btn-red btn-sm" onclick="clearAll()">Clear All</button>';
+  h += '<span class="gap-info" id="gapInfo"></span>';
   h += '</div>';
-  h += '<div class="prog-section" id="progSection" style="display:none">';
-  h += '<div class="prog-lbl" id="progLbl">Starting...</div>';
-  h += '<div class="prog-track"><div class="prog-fill" id="progFill" style="width:0%"></div></div>';
-  h += '</div>';
+  h += '<div class="prog" id="progSection" style="display:none"><div class="prog-bar"><div class="prog-fill" id="progFill" style="width:0%"></div></div><div class="prog-lbl" id="progLbl"></div></div>';
   h += '</div>';
 
   h += '<div class="grid" id="grid"></div>';
-  h += '<div class="toast-wrap" id="toasts"></div>';
 
-  // Confirm modal
-  h += '<div class="modal-bg" id="confirmModal" style="display:none">';
+  h += '<div class="modal-overlay" id="confirmModal">';
   h += '<div class="modal">';
-  h += '<h3>Confirm Before Posting</h3>';
-  h += '<div class="sub" id="confirmSub">Check this is the right book before it goes live on eBay</div>';
+  h += '<h3>Confirm Listing</h3><div class="modal-sub" id="confirmSub"></div>';
   h += '<img class="modal-img" id="confirmMainImg" src="">';
   h += '<div class="modal-thumbs" id="confirmThumbs"></div>';
   h += '<div class="modal-info">';
-  h += '<div class="row"><span class="lbl">Title</span><span class="val" id="confirmTitle"></span></div>';
-  h += '<div class="row"><span class="lbl">Author</span><span class="val" id="confirmAuthor"></span></div>';
-  h += '<div class="row"><span class="lbl">Format</span><span class="val" id="confirmFormat"></span></div>';
-  h += '<div class="row"><span class="lbl">Condition</span><span class="val" id="confirmCondition"></span></div>';
-  h += '<div class="row"><span class="lbl">Price</span><span class="val" id="confirmPrice"></span></div>';
-  h += '<div class="row"><span class="lbl">Photos</span><span class="val" id="confirmPhotos"></span></div>';
+  h += '<strong id="confirmTitle"></strong><br>';
+  h += 'By <span id="confirmAuthor"></span><br>';
+  h += 'Format: <span id="confirmFormat"></span><br>';
+  h += 'Price: <span id="confirmPrice"></span><br>';
+  h += '<span id="confirmPhotos"></span>';
   h += '</div>';
-  h += '<div class="modal-actions">';
-  h += '<button class="btn" style="flex:1" id="confirmYes">\u2713 Yes, Post to eBay</button>';
-  h += '<button class="btn btn-orange" style="flex:1" id="confirmNo">\u2717 Cancel</button>';
-  h += '</div></div></div>';
+  h += '<div class="modal-btns"><button class="btn btn-green" id="confirmYes">Post to eBay \u2713</button><button class="btn btn-outline" id="confirmNo">Cancel</button></div>';
+  h += '</div></div>';
 
-  h += '<script>\n';
-  h += 'var items=[],busy=false;\n';
-  h += 'var GAP_SECONDS=30;\n';
+  h += '<div class="toasts" id="toasts"></div>';
 
-  // Drag and drop
-  h += 'var drop=document.getElementById("drop");\n';
-  h += 'drop.addEventListener("dragover",function(e){e.preventDefault();drop.classList.add("over")});\n';
-  h += 'drop.addEventListener("dragleave",function(){drop.classList.remove("over")});\n';
-  h += 'drop.addEventListener("drop",function(e){e.preventDefault();drop.classList.remove("over");handleFiles(e.dataTransfer.files)});\n';
+  h += '<script>';
+  h += 'var items=[];var busy=false;\n';
 
-  // Load saved keys
-  h += 'window.onload=function(){\n';
-  h += '  var k=localStorage.getItem("fa_ck"),e=localStorage.getItem("fa_ek");\n';
-  h += '  if(k)document.getElementById("apiKey").value=k;\n';
-  h += '  if(e)document.getElementById("ebayKey").value=e;\n';
-  h += '  if(k)setStatus("Keys loaded","");\n';
-  h += '};\n';
+  h += 'var ck=localStorage.getItem("fa_ck")||"";var ek=localStorage.getItem("fa_ek")||"";\n';
+  h += 'document.getElementById("ckInput").value=ck;\n';
+  h += 'document.getElementById("ekInput").value=ek;\n';
+  h += 'if(ck&&ek)document.getElementById("keyStatus").textContent="Keys loaded";\n';
 
-  h += 'function setStatus(m,t){var s=document.getElementById("keyStatus");s.textContent=m;s.className="status"+(t?" "+t:"")}\n';
-
-  // Verify
-  h += 'function verify(){\n';
-  h += '  var k=document.getElementById("apiKey").value.trim();\n';
-  h += '  var e=document.getElementById("ebayKey").value.trim();\n';
-  h += '  if(!k){setStatus("Enter your Claude API key","err");return}\n';
-  h += '  setStatus("Testing...","");\n';
-  h += '  fetch("/verify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apiKey:k})})\n';
+  h += 'function verifyKeys(){\n';
+  h += '  var ck=document.getElementById("ckInput").value.trim();\n';
+  h += '  var ek=document.getElementById("ekInput").value.trim();\n';
+  h += '  if(!ck||!ek){toast("Enter both keys","err");return}\n';
+  h += '  document.getElementById("keyStatus").textContent="Verifying\u2026";\n';
+  h += '  fetch("/verify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apiKey:ck})})\n';
   h += '  .then(function(r){return r.json()})\n';
   h += '  .then(function(d){\n';
-  h += '    if(d.error){setStatus("Error: "+d.error,"err");return}\n';
-  h += '    localStorage.setItem("fa_ck",k);\n';
-  h += '    if(e)localStorage.setItem("fa_ek",e);\n';
-  h += '    setStatus("Claude API working! eBay App ID saved. Ready to analyze.","");\n';
-  h += '  })\n';
-  h += '  .catch(function(err){setStatus("Failed: "+err.message,"err")})\n';
+  h += '    if(d.type==="error"){document.getElementById("keyStatus").textContent="Claude key invalid";toast("Claude key invalid","err");return}\n';
+  h += '    localStorage.setItem("fa_ck",ck);localStorage.setItem("fa_ek",ek);\n';
+  h += '    document.getElementById("keyStatus").textContent="\u2713 Keys saved";\n';
+  h += '    toast("Keys verified and saved!","")\n';
+  h += '  }).catch(function(){toast("Verify failed","err")})\n';
   h += '}\n';
 
-  // Handle file drop/select
+  h += 'function makeItem(g){return {id:Date.now()+Math.random(),files:g,urls:g.map(function(f){return URL.createObjectURL(f)}),mainIdx:0,status:"idle",title:"",author:"",bookTitle:"",format:"",language:"English",desc:"",genre:"",publisher:"",publicationYear:"",isbn:"",topic:"",condition:"Good",weightLbs:"",weightOz:"",location:"",firstEdition:false,firstEditionPremium:false,editingAuthor:false,editingPrice:false,price:10,min:5,max:20,avg:12}}\n';
+
   h += 'function handleFiles(files){\n';
   h += '  var imgs=Array.from(files).filter(function(f){return f.type.startsWith("image/")||/\\.(jpg|jpeg|png|webp|heic)$/i.test(f.name)});\n';
   h += '  if(!imgs.length){toast("No image files found","err");return}\n';
   h += '  imgs.sort(function(a,b){return a.lastModified-b.lastModified});\n';
-  h += '  var groups=[],cur=[];\n';
-  h += '  for(var i=0;i<imgs.length;i++){\n';
-  h += '    if(cur.length===0){cur.push(imgs[i]);}\n';
-  h += '    else{\n';
-  h += '      var gap=(imgs[i].lastModified-imgs[i-1].lastModified)/1000;\n';
-  h += '      if(gap<=GAP_SECONDS&&cur.length<12){cur.push(imgs[i]);}\n';
-  h += '      else{groups.push(cur);cur=[imgs[i]];}\n';
-  h += '    }\n';
-  h += '  }\n';
-  h += '  if(cur.length)groups.push(cur);\n';
-  h += '  groups.forEach(function(g){\n';
-  h += '    items.push({id:Date.now()+Math.random(),files:g,urls:g.map(function(f){return URL.createObjectURL(f)}),mainIdx:0,\n';
-  h += '      status:"idle",title:"",author:"",bookTitle:"",format:"",language:"English",\n';
-  h += '      desc:"",genre:"",publisher:"",publicationYear:"",isbn:"",topic:"",\n';
-  h += '      condition:"Good",firstEdition:"",price:10,min:5,max:20,avg:12,weightLbs:"",weightOz:""});\n';
-  h += '  });\n';
   h += '  document.getElementById("statsWrap").style.display="block";\n';
-  h += '  document.getElementById("gapInfo").textContent="Grouped "+imgs.length+" photos into "+groups.length+" books ("+GAP_SECONDS+"s gap)";\n';
-  h += '  render();updateStats();toast("Grouped "+imgs.length+" photos into "+groups.length+" books!","");\n';
+  h += '  document.getElementById("gapInfo").textContent="Scanning "+imgs.length+" photos \u2014 reading book ID numbers\u2026";\n';
+  h += '  var k=localStorage.getItem("fa_ck");\n';
+  h += '  if(!k){toast("Verify API key first","err");return}\n';
+  h += '  var thumbPromises=imgs.map(function(f){\n';
+  h += '    return new Promise(function(res){\n';
+  h += '      var r=new FileReader();\n';
+  h += '      r.onload=function(){\n';
+  h += '        var img=new Image();\n';
+  h += '        img.onload=function(){\n';
+  h += '          var canvas=document.createElement("canvas");\n';
+  h += '          var MAX=256;var scale=Math.min(MAX/img.width,MAX/img.height,1);\n';
+  h += '          canvas.width=Math.round(img.width*scale);canvas.height=Math.round(img.height*scale);\n';
+  h += '          canvas.getContext("2d").drawImage(img,0,0,canvas.width,canvas.height);\n';
+  h += '          res({data:canvas.toDataURL("image/jpeg",0.7).split(",")[1],mimeType:"image/jpeg"});\n';
+  h += '        };\n';
+  h += '        img.src=r.result;\n';
+  h += '      };\n';
+  h += '      r.readAsDataURL(f);\n';
+  h += '    });\n';
+  h += '  });\n';
+  h += '  Promise.all(thumbPromises).then(function(thumbs){\n';
+  h += '    fetch("/classify-photos",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apiKey:k,photos:thumbs})})\n';
+  h += '    .then(function(r){return r.json()})\n';
+  h += '    .then(function(d){\n';
+  h += '      if(d.error||!d.results){toast("Classification failed \u2014 using fallback","err");fallbackGroup(imgs);return}\n';
+  h += '      var results=d.results;\n';
+  h += '      var bookMap={};var bookOrder=[];var lastKnownId=null;\n';
+  h += '      for(var i=0;i<imgs.length;i++){\n';
+  h += '        var r=results[i]||{bookId:"?",type:"photo"};\n';
+  h += '        var bid=(r.bookId||"?").replace(/[^0-9a-zA-Z]/g,"");\n';
+  h += '        if(!bid||bid==="?"||bid.length<2){\n';
+  h += '          bid=lastKnownId||(bookOrder.length>0?bookOrder[bookOrder.length-1]:"unknown");\n';
+  h += '        } else {\n';
+  h += '          lastKnownId=bid;\n';
+  h += '        }\n';
+  h += '        if(!bookMap[bid]){bookMap[bid]={photos:[],notecard:null};bookOrder.push(bid)}\n';
+  h += '        if(r.type==="notecard"){bookMap[bid].notecard=imgs[i]}\n';
+  h += '        else{bookMap[bid].photos.push(imgs[i])}\n';
+  h += '      }\n';
+  h += '      var groups=bookOrder.map(function(bid){var e=bookMap[bid];var g=e.photos.slice();if(e.notecard)g.push(e.notecard);return g});\n';
+  h += '      var valid=groups.filter(function(g){return g.length>=2});\n';
+  h += '      var skipped=groups.length-valid.length;\n';
+  h += '      valid.forEach(function(g){items.push(makeItem(g))});\n';
+  h += '      var msg="Grouped "+imgs.length+" photos into "+valid.length+" books by ID number";\n';
+  h += '      if(skipped>0)msg+=" ("+skipped+" skipped)";\n';
+  h += '      document.getElementById("gapInfo").textContent=msg;\n';
+  h += '      render();updateStats();toast(msg,"")\n';
+  h += '    })\n';
+  h += '    .catch(function(){toast("Grouping error \u2014 using fallback","err");fallbackGroup(imgs)})\n';
+  h += '  })\n';
   h += '}\n';
 
-  h += 'function setMain(id,idx){var item=items.find(function(i){return i.id==id});if(item){item.mainIdx=idx;refresh(item)}}\n';
-  h += 'function render(){var g=document.getElementById("grid");g.innerHTML="";items.forEach(function(item,n){var d=document.createElement("div");d.className="card "+item.status;d.id="c"+item.id;d.innerHTML=cardHTML(item,n+1);g.appendChild(d)})}\n';
-
-  // Card HTML
-  h += 'function cardHTML(item,num){\n';
-  h += '  var mi=item.mainIdx||0;\n';
-  h += '  var b="<img class=\'main-img\' src=\'"+item.urls[mi]+"\' loading=\'lazy\'>";\n';
-  h += '  b+="<div class=\'thumb-strip\'>";\n';
-  h += '  item.urls.forEach(function(url,i){b+="<img class=\'thumb"+(i===mi?" main":"")+" \' src=\'"+url+"\' onclick=\'setMain("+item.id+","+i+")\'>"}); \n';
-  h += '  b+="</div><div class=\'card-body\'>";\n';
-  h += '  b+="<div class=\'card-meta\'>Book #"+num+" &bull; "+item.files.length+" photo"+(item.files.length>1?"s":"")+" &bull; "+item.status+"</div>";\n';
-  h += '  if(item.status==="processing"){b+="<div style=\'color:#7c6bff;padding:8px 0\'>Analyzing "+item.files.length+" photos...</div>";}\n';
-  h += '  else if(item.status==="posting"){b+="<div style=\'color:#ffb800;padding:8px 0\'>Uploading photos & posting to eBay...</div>";}\n';
-  h += '  else if(item.title){\n';
-  h += '    b+="<div class=\'price-box\'>Range $"+item.min+"-$"+item.max+" &bull; Avg $"+item.avg+"<br><span class=\'price-big\'>List: $"+item.price+"</span></div>";\n';
-  h += '    b+="<div class=\'fl\'>Title</div><input class=\'ef\' value=\'"+esc(item.title)+"\' onchange=\'upd("+item.id+",\\"title\\",this.value)\'>";\n';
-  h += '    b+="<div class=\'ef-row\'>";\n';
-  h += '    b+="<div><div class=\'fl\'"+(item.author==="Unknown"?" style=\'color:#ffb800\'":"")+">Author"+(item.author==="Unknown"?" ⚠ fill in":"")+"</div><input class=\'ef\'"+(item.author==="Unknown"?" style=\'border-color:#ffb800\'":"")+" value=\'"+esc(item.author)+"\' onchange=\'upd("+item.id+",\\"author\\",this.value)\'></div>";\n';
-  h += '    b+="<div><div class=\'fl\'>Format</div><input class=\'ef\' value=\'"+esc(item.format)+"\' onchange=\'upd("+item.id+",\\"format\\",this.value)\'></div>";\n';
-  h += '    b+="</div>";\n';
-  h += '    b+="<div class=\'ef-row\'>";\n';
-  h += '    b+="<div><div class=\'fl\'>Genre</div><input class=\'ef\' value=\'"+esc(item.genre)+"\' onchange=\'upd("+item.id+",\\"genre\\",this.value)\'></div>";\n';
-  h += '    b+="<div><div class=\'fl\'>Year</div><input class=\'ef\' value=\'"+esc(item.publicationYear)+"\' onchange=\'upd("+item.id+",\\"publicationYear\\",this.value)\'></div>";\n';
-  h += '    b+="</div>";\n';
-  h += '    b+="<div class=\'fl\'>Condition</div><select class=\'ef\' onchange=\'upd("+item.id+",\\"condition\\",this.value)\'>";\n';
-  h += '    ["New","Like New","Good","Acceptable","For Parts/Not Working"].forEach(function(c){b+="<option"+(item.condition===c?" selected":"")+">"+c+"</option>";});\n';
-  h += '    b+="</select>";\n';
-  h += '    if(item.firstEdition==="Yes"){b+="<div style=\'background:#2a1a00;border:1px solid #ffb800;border-radius:5px;padding:5px 9px;font-size:0.72rem;color:#ffb800;margin-bottom:6px\'>⭐ 1st Edition — consider higher price</div>";}\n';
-  h += '    b+="<div class=\'ef-row\'>";\n';
-  h += '    b+="<div class=\'ef-row\'>";\n';
-  h += '    b+="<div><div class=\'fl\'>Weight lbs</div><input class=\'ef\' type=\'number\' placeholder=\'0\' value=\'"+(item.weightLbs||"")+"\' onchange=\'upd("+item.id+",\\"weightLbs\\",this.value)\'></div>";\n';
-  h += '    b+="<div><div class=\'fl\'>Weight oz</div><input class=\'ef\' type=\'number\' placeholder=\'0\' value=\'"+(item.weightOz||"")+"\' onchange=\'upd("+item.id+",\\"weightOz\\",this.value)\'></div>";\n';
-  h += '    b+="</div>";\n';
-  h += '    b+="<div><div class=\'fl\'>Price $</div><input class=\'ef\' type=\'number\' value=\'"+item.price+"\' onchange=\'upd("+item.id+",\\"price\\",this.value)\'></div>";\n';
-  h += '    b+="<div><div class=\'fl\'>Weight lbs</div><input class=\'ef\' type=\'number\' placeholder=\'0\' value=\'"+(item.weightLbs||"")+"\' onchange=\'upd("+item.id+",\\"weightLbs\\",this.value)\'></div>";\n';
-  h += '    b+="</div>";\n';
-  h += '    if(item.ebayId){b+="<a href=\'"+item.ebayUrl+"\' target=\'_blank\' class=\'btn btn-sm\' style=\'text-decoration:none;display:inline-block;margin-top:6px\'>\u2713 View on eBay</a>";}\n';
-  h += '    else{b+="<div class=\'actions\'><button class=\'btn btn-sm btn-purple\' onclick=\'postOne("+item.id+")\'>Post to eBay</button><button class=\'btn btn-sm btn-outline\' onclick=\'analyzeOne("+item.id+")\'>Re-analyze</button></div>";}\n';
+  h += 'function fallbackGroup(imgs){\n';
+  h += '  var groups=[],cur=[];\n';
+  h += '  for(var i=0;i<imgs.length;i++){\n';
+  h += '    if(cur.length===0){cur.push(imgs[i])}\n';
+  h += '    else{var gap=(imgs[i].lastModified-imgs[i-1].lastModified)/1000;\n';
+  h += '    if(gap<=7&&cur.length<15){cur.push(imgs[i])}else{groups.push(cur);cur=[imgs[i]]}}\n';
   h += '  }\n';
-  h += '  else if(item.status==="error"){b+="<div style=\'color:#ff6b35;font-size:.78rem;margin:8px 0\'>"+(item.errorMsg||"Analysis failed")+"</div><div class=\'actions\'><button class=\'btn btn-sm\' onclick=\'analyzeOne("+item.id+")\'>Retry</button></div>";}\n';
-  h += '  else{b+="<div class=\'actions\'><button class=\'btn btn-sm\' onclick=\'analyzeOne("+item.id+")\'>Analyze</button></div>";}\n';
-  h += '  b+="</div>";\n';
+  h += '  if(cur.length)groups.push(cur);\n';
+  h += '  var valid=groups.filter(function(g){return g.length>=2});\n';
+  h += '  valid.forEach(function(g){items.push(makeItem(g))});\n';
+  h += '  document.getElementById("gapInfo").textContent="Grouped into "+valid.length+" books (fallback 7s gap)";\n';
+  h += '  render();updateStats()\n';
+  h += '}\n';
+
+  h += 'var dz=document.getElementById("dropZone");\n';
+  h += 'dz.addEventListener("dragover",function(e){e.preventDefault();dz.classList.add("drag")});\n';
+  h += 'dz.addEventListener("dragleave",function(){dz.classList.remove("drag")});\n';
+  h += 'dz.addEventListener("drop",function(e){e.preventDefault();dz.classList.remove("drag");handleFiles(e.dataTransfer.files)});\n';
+  h += 'document.getElementById("fileInput").addEventListener("change",function(e){handleFiles(e.target.files)});\n';
+
+  h += 'function clearAll(){items=[];render();updateStats();document.getElementById("statsWrap").style.display="none"}\n';
+
+  h += 'function esc(s){return(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}\n';
+
+  h += 'function upd(id,field,val){\n';
+  h += '  var item=items.find(function(i){return i.id==id});\n';
+  h += '  if(!item)return;\n';
+  h += '  if(field==="price")val=parseFloat(val)||item.price;\n';
+  h += '  item[field]=val;refresh(item)\n';
+  h += '}\n';
+
+  h += 'function editField(id,field){\n';
+  h += '  var item=items.find(function(i){return i.id==id});\n';
+  h += '  if(!item)return;\n';
+  h += '  if(field==="author")item.editingAuthor=true;\n';
+  h += '  if(field==="price")item.editingPrice=true;\n';
+  h += '  refresh(item);\n';
+  h += '  setTimeout(function(){var el=document.getElementById("ef_"+field+"_"+id);if(el){el.focus();el.select()}},50)\n';
+  h += '}\n';
+
+  h += 'function doneEdit(id,field){\n';
+  h += '  var item=items.find(function(i){return i.id==id});\n';
+  h += '  if(!item)return;\n';
+  h += '  if(field==="author")item.editingAuthor=false;\n';
+  h += '  if(field==="price")item.editingPrice=false;\n';
+  h += '  refresh(item)\n';
+  h += '}\n';
+
+  h += 'function splitGroup(id){\n';
+  h += '  var idx=items.findIndex(function(i){return i.id==id});\n';
+  h += '  if(idx<0)return;\n';
+  h += '  var item=items[idx];\n';
+  h += '  if(item.files.length<2){toast("Need at least 2 photos to split","err");return}\n';
+  h += '  var half=Math.ceil(item.files.length/2);\n';
+  h += '  var newItem=makeItem(item.files.slice(half));\n';
+  h += '  newItem.urls=item.urls.slice(half);\n';
+  h += '  item.files=item.files.slice(0,half);\n';
+  h += '  item.urls=item.urls.slice(0,half);\n';
+  h += '  items.splice(idx+1,0,newItem);\n';
+  h += '  render();updateStats();toast("Split into 2 \u2014 re-analyze both","")\n';
+  h += '}\n';
+
+  h += 'function mergeGroup(id){\n';
+  h += '  var idx=items.findIndex(function(i){return i.id==id});\n';
+  h += '  if(idx<0||idx===items.length-1){toast("No next book to merge with","err");return}\n';
+  h += '  var item=items[idx];var next=items[idx+1];\n';
+  h += '  item.files=item.files.concat(next.files);\n';
+  h += '  item.urls=item.urls.concat(next.urls);\n';
+  h += '  item.status="idle";item.title="";\n';
+  h += '  items.splice(idx+1,1);\n';
+  h += '  render();updateStats();toast("Merged \u2014 re-analyze","")\n';
+  h += '}\n';
+
+  h += 'function cardHTML(item,n){\n';
+  h += '  var mi=item.mainIdx||0;\n';
+  h += '  var b="";\n';
+  h += '  b+=\'<img class="main-img" src="\'+item.urls[mi]+\'" onclick="cycleMain(\'+item.id+\')" />\';\n';
+  h += '  if(item.urls.length>1){\n';
+  h += '    b+=\'<div class="thumbs">\';\n';
+  h += '    item.urls.forEach(function(u,i){b+=\'<img class="thumb\'+(i===mi?\' sel\':\'\')+\'" src="\'+u+\'" onclick="setMain(\'+item.id+\',\'+i+\')" />\'});\n';
+  h += '    b+=\'</div>\';\n';
+  h += '  }\n';
+  h += '  if(item.status==="processing")b+=\'<div class="status-bar processing">\uD83D\uDD0D Analyzing\u2026</div>\';\n';
+  h += '  else if(item.status==="posting")b+=\'<div class="status-bar posting">\uD83D\uDCE4 Posting to eBay\u2026</div>\';\n';
+  h += '  else if(item.status==="error")b+=\'<div class="status-bar error">\u274C \'+(item.errorMsg||"Error")+\'</div>\';\n';
+  h += '  else if(item.status==="posted")b+=\'<div class="status-bar posted">\u2705 Posted: <a href="\'+item.ebayUrl+\'" target="_blank" style="color:#a855f7">eBay #\'+item.ebayId+\'</a></div>\';\n';
+  h += '  b+=\'<div class="card-body">\';\n';
+  h += '  b+=\'<div class="book-num">Book #\'+n+\' \u2022 \'+item.files.length+\' photos</div>\';\n';
+  h += '  if(item.title){b+=\'<div class="book-title">\'+esc(item.title)+\'</div>\'}\n';
+  h += '  b+=\'<div class="fl">Author <button class="edit-btn" onclick="editField(\'+item.id+\',\\\'author\\\')">&#9999;&#65039;</button></div>\';\n';
+  h += '  if(item.editingAuthor){\n';
+  h += '    b+=\'<input class="ef" id="ef_author_\'+item.id+\'" value="\'+esc(item.author)+\'" onchange="upd(\'+item.id+\',\\\'author\\\',this.value)" onblur="doneEdit(\'+item.id+\',\\\'author\\\')">\';\n';
+  h += '  } else {\n';
+  h += '    b+=\'<div class="ef-val">\'+(item.author||\'<span style="color:#ff6b35">Unknown \u2014 tap &#9999;&#65039;</span>\')+\'</div>\';\n';
+  h += '  }\n';
+  h += '  b+=\'<div class="fl">Condition</div><input class="ef" value="\'+esc(item.condition)+\'" onchange="upd(\'+item.id+\',\\\'condition\\\',this.value)">\';\n';
+  h += '  b+=\'<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">\';\n';
+  h += '  b+=\'<div><div class="fl">Genre</div><input class="ef" value="\'+esc(item.genre||"")+\'" onchange="upd(\'+item.id+\',\\\'genre\\\',this.value)"></div>\';\n';
+  h += '  b+=\'<div><div class="fl">Year</div><input class="ef" value="\'+esc(item.publicationYear||"")+\'" onchange="upd(\'+item.id+\',\\\'publicationYear\\\',this.value)"></div>\';\n';
+  h += '  b+=\'</div>\';\n';
+  h += '  if(item.status==="done"||item.status==="posted"){\n';
+  h += '    b+=\'<div class="price-box">\';\n';
+  h += '    b+="Avg $"+item.avg+" | $"+item.min+" - $"+item.max;\n';
+  h += '    if(item.firstEditionPremium)b+=\' <span style="color:#ffb800;font-size:0.7rem">(1st Ed pricing)</span>\';\n';
+  h += '    b+=\'<br><div class="fl" style="margin-top:4px">List Price <button class="edit-btn" onclick="editField(\'+item.id+\',\\\'price\\\')">&#9999;&#65039;</button></div>\';\n';
+  h += '    if(item.editingPrice){\n';
+  h += '      b+=\'<input class="ef" id="ef_price_\'+item.id+\'" type="number" value="\'+item.price+\'" onchange="upd(\'+item.id+\',\\\'price\\\',this.value)" onblur="doneEdit(\'+item.id+\',\\\'price\\\')">\';\n';
+  h += '    } else {\n';
+  h += '      b+=\'<div class="price-big">$\'+item.price+\'</div>\';\n';
+  h += '    }\n';
+  h += '    b+=\'</div>\';\n';
+  h += '    if(item.firstEdition)b+=\'<div class="badge-1st">\u2B50 1ST EDITION</div>\';\n';
+  h += '    if(item.location)b+=\'<div class="badge-loc">\uD83D\uDCCD \'+esc(item.location)+\'</div>\';\n';
+  h += '  }\n';
+  h += '  b+=\'<div class="actions">\';\n';
+  h += '  if(item.status==="posted"){\n';
+  h += '    b+=\'<button class="btn btn-sm btn-outline" onclick="analyzeOne(\'+item.id+\')">Re-analyze</button>\';\n';
+  h += '  } else if(item.status==="done"){\n';
+  h += '    b+=\'<button class="btn btn-sm btn-purple" onclick="postOne(\'+item.id+\')">Post to eBay</button>\';\n';
+  h += '    b+=\'<button class="btn btn-sm btn-outline" onclick="analyzeOne(\'+item.id+\')">Re-analyze</button>\';\n';
+  h += '  } else if(item.status!=="processing"&&item.status!=="posting"){\n';
+  h += '    b+=\'<button class="btn btn-sm btn-green" onclick="analyzeOne(\'+item.id+\')">Analyze</button>\';\n';
+  h += '  }\n';
+  h += '  if(item.status!=="processing"&&item.status!=="posting"){\n';
+  h += '    b+=\'<button class="btn btn-sm btn-outline" onclick="splitGroup(\'+item.id+\')">\u2702\uFE0F Split</button>\';\n';
+  h += '    b+=\'<button class="btn btn-sm btn-outline" onclick="mergeGroup(\'+item.id+\')">\uD83D\uDD17 Merge</button>\';\n';
+  h += '  }\n';
+  h += '  b+=\'</div>\';\n';
+  h += '  b+=\'</div>\';\n';
   h += '  return b\n';
   h += '}\n';
 
-  h += 'function esc(s){return(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}\n';
-  h += 'function upd(id,f,v){var i=items.find(function(x){return x.id==id});if(i){i[f]=v;updateStats()}}\n';
-  h += 'function clearAll(){items=[];render();document.getElementById("statsWrap").style.display="none";updateStats()}\n';
+  h += 'function render(){var g=document.getElementById("grid");g.innerHTML="";items.forEach(function(item,i){var d=document.createElement("div");d.className="card "+item.status;d.id="c"+item.id;d.innerHTML=cardHTML(item,i+1);g.appendChild(d)})}\n';
+
+  h += 'function setMain(id,i){var item=items.find(function(x){return x.id==id});if(!item)return;item.mainIdx=i;refresh(item)}\n';
+  h += 'function cycleMain(id){var item=items.find(function(x){return x.id==id});if(!item)return;item.mainIdx=((item.mainIdx||0)+1)%item.urls.length;refresh(item)}\n';
+
   h += 'function analyzeOne(id){var item=items.find(function(i){return i.id==id});if(item)doAnalyze(item).then(function(){refresh(item);updateStats()})}\n';
 
-  // Analyze all
   h += 'function analyzeAll(){\n';
-  h += '  if(busy)return;\n';
-  h += '  var k=localStorage.getItem("fa_ck");\n';
-  h += '  if(!k){toast("Verify API key first","err");return}\n';
-  h += '  busy=true;\n';
+  h += '  if(busy){toast("Already running","err");return}\n';
   h += '  var q=items.filter(function(i){return i.status==="idle"||i.status==="error"});\n';
-  h += '  if(!q.length){busy=false;toast("All analyzed!","");return}\n';
-  h += '  var idx=0;\n';
+  h += '  if(!q.length){toast("Nothing to analyze","err");return}\n';
+  h += '  busy=true;var idx=0;\n';
   h += '  document.getElementById("progSection").style.display="block";\n';
   h += '  function next(){\n';
   h += '    if(idx>=q.length){busy=false;document.getElementById("progSection").style.display="none";toast("Done! "+q.length+" books analyzed","");updateStats();return}\n';
@@ -498,35 +680,33 @@ app.get('/', function(req, res) {
   h += '  next()\n';
   h += '}\n';
 
-  // Do analyze — downscale images to 800px before sending
   h += 'function doAnalyze(item){\n';
   h += '  var k=localStorage.getItem("fa_ck");\n';
-  h += '  if(!k){item.status="error";item.errorMsg="No API key";return Promise.resolve()}\n';
+  h += '  if(!k){item.status="error";return Promise.resolve()}\n';
   h += '  item.status="processing";refresh(item);\n';
-  h += '  var promises=item.files.map(function(file){\n';
-  h += '    return new Promise(function(res,rej){\n';
-  h += '      var fr=new FileReader();fr.onload=function(){\n';
-  h += '        var img=new Image();img.onload=function(){\n';
-  h += '          var MAX=800;var scale=Math.min(MAX/img.width,MAX/img.height,1);\n';
-  h += '          var c=document.createElement("canvas");c.width=Math.round(img.width*scale);c.height=Math.round(img.height*scale);\n';
-  h += '          c.getContext("2d").drawImage(img,0,0,c.width,c.height);\n';
-  h += '          res({data:c.toDataURL("image/jpeg",0.85).split(",")[1],mimeType:"image/jpeg"});\n';
-  h += '        };img.src=fr.result;\n';
-  h += '      };fr.onerror=rej;fr.readAsDataURL(file);\n';
-  h += '    })\n';
-  h += '  });\n';
+  h += '  var filesToRead=item.files;\n';
+  h += '  var promises=filesToRead.map(function(file){return new Promise(function(res,rej){\n';
+  h += '    var fr=new FileReader();fr.onload=function(){\n';
+  h += '      var img=new Image();img.onload=function(){\n';
+  h += '        var MAX=800;var scale=Math.min(MAX/img.width,MAX/img.height,1);\n';
+  h += '        var c=document.createElement("canvas");c.width=Math.round(img.width*scale);c.height=Math.round(img.height*scale);\n';
+  h += '        c.getContext("2d").drawImage(img,0,0,c.width,c.height);\n';
+  h += '        res({data:c.toDataURL("image/jpeg",0.82).split(",")[1],mimeType:"image/jpeg"});\n';
+  h += '      };img.src=fr.result;\n';
+  h += '    };fr.onerror=rej;fr.readAsDataURL(file);\n';
+  h += '  })});\n';
   h += '  return Promise.all(promises).then(function(images){\n';
   h += '    return fetch("/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apiKey:k,images:images})})\n';
   h += '    .then(function(r){return r.json()})\n';
   h += '    .then(function(d){\n';
   h += '      if(d.error)throw new Error(d.error);\n';
-  h += '      var t=(d.content||[]).map(function(c){return c.text||""}).join("");\n';
+  h += '      var t=(d.content||[]).filter(function(c){return c.type==="text"}).map(function(c){return c.text||""}).join("");\n';
   h += '      var s=t.indexOf("{"),e=t.lastIndexOf("}");\n';
   h += '      if(s<0||e<0)throw new Error("No JSON in response");\n';
   h += '      var p=JSON.parse(t.slice(s,e+1));\n';
   h += '      item.title=p.title||"Book";\n';
-  h += '      item.author=p.author||"Unknown";\n';
-  h += '      item.bookTitle=p.bookTitle||"";\n';
+  h += '      item.author=p.author||"";\n';
+  h += '      item.bookTitle=p.bookTitle||p.title||"Book";\n';
   h += '      item.format=p.format||"";\n';
   h += '      item.language=p.language||"English";\n';
   h += '      item.desc=p.description||"";\n';
@@ -535,85 +715,92 @@ app.get('/', function(req, res) {
   h += '      item.publicationYear=p.publicationYear||"";\n';
   h += '      item.isbn=p.isbn||"";\n';
   h += '      item.topic=p.topic||"";\n';
-  h += '      item.condition=p.condition||"Good";item.firstEdition=p.firstEdition||"";\n';
+  h += '      item.condition=p.condition||"Good";\n';
+  h += '      item.weightLbs=p.weightLbs||"";\n';
+  h += '      item.weightOz=p.weightOz||"";\n';
+  h += '      item.location=p.location||"";\n';
+  h += '      item.firstEdition=p.firstEdition||false;\n';
+  h += '      item.firstEditionPremium=p.firstEditionPremium||false;\n';
   h += '      item.min=p.minPrice||5;\n';
   h += '      item.max=p.maxPrice||20;\n';
   h += '      item.avg=p.avgPrice||12;\n';
   h += '      item.price=p.suggestedPrice||12;\n';
-  h += '      item.status="done";\n';
+  h += '      item.conditionId=p.conditionId||"3000";\n';
+  h += '      item.status="done"\n';
   h += '    })\n';
-  h += '    .catch(function(err){item.status="error";item.errorMsg=err.message.substring(0,100);toast("Error: "+item.errorMsg,"err")})\n';
+  h += '    .catch(function(err){item.status="error";item.errorMsg=err.message.substring(0,80);toast("Error: "+item.errorMsg,"err")})\n';
   h += '  })\n';
   h += '}\n';
 
   h += 'function refresh(item){var n=items.indexOf(item)+1;var c=document.getElementById("c"+item.id);if(c){c.className="card "+item.status;c.innerHTML=cardHTML(item,n)}}\n';
 
-  // Confirm modal
   h += 'var confirmCallback=null;\n';
   h += 'document.getElementById("confirmYes").onclick=function(){document.getElementById("confirmModal").style.display="none";if(confirmCallback)confirmCallback()};\n';
-  h += 'document.getElementById("confirmNo").onclick=function(){document.getElementById("confirmModal").style.display="none";confirmCallback=null;toast("Cancelled","")};\n';
+  h += 'document.getElementById("confirmNo").onclick=function(){document.getElementById("confirmModal").style.display="none";confirmCallback=null};\n';
 
   h += 'function showConfirm(item,onConfirm){\n';
   h += '  var mi=item.mainIdx||0;\n';
   h += '  var n=items.indexOf(item)+1;\n';
-  h += '  document.getElementById("confirmSub").textContent="Book #"+n+" of "+items.length+" \u2014 Is this the right book?";\n';
+  h += '  document.getElementById("confirmSub").textContent="Book #"+n+" \u2014 confirm before posting";\n';
   h += '  document.getElementById("confirmMainImg").src=item.urls[mi];\n';
-  h += '  document.getElementById("confirmTitle").textContent=item.title;\n';
+  h += '  document.getElementById("confirmTitle").textContent=item.title||"Unknown";\n';
   h += '  document.getElementById("confirmAuthor").textContent=item.author||"Unknown";\n';
   h += '  document.getElementById("confirmFormat").textContent=item.format||"Unknown";\n';
-  h += '  document.getElementById("confirmCondition").textContent=item.condition||"Good";\n';
   h += '  document.getElementById("confirmPrice").textContent="$"+item.price;\n';
-  h += '  document.getElementById("confirmPhotos").textContent=item.files.length+" photo(s) will be uploaded";\n';
+  h += '  document.getElementById("confirmPhotos").textContent=(item.files.length-1)+" photo(s) will be uploaded (note card excluded)";\n';
   h += '  var thumbs=document.getElementById("confirmThumbs");thumbs.innerHTML="";\n';
-  h += '  item.urls.forEach(function(url,i){var img=document.createElement("img");img.className="modal-thumb"+(i===mi?" sel":"");img.src=url;img.onclick=function(){document.getElementById("confirmMainImg").src=url;item.mainIdx=i;Array.from(thumbs.children).forEach(function(c){c.classList.remove("sel")});img.classList.add("sel")};thumbs.appendChild(img)});\n';
+  h += '  item.urls.slice(0,-1).forEach(function(url,i){\n';
+  h += '    var img=document.createElement("img");\n';
+  h += '    img.className="modal-thumb"+(i===mi?" sel":"");\n';
+  h += '    img.src=url;\n';
+  h += '    img.onclick=function(){\n';
+  h += '      document.getElementById("confirmMainImg").src=url;\n';
+  h += '      item.mainIdx=i;\n';
+  h += '      Array.from(thumbs.children).forEach(function(c){c.classList.remove("sel")});\n';
+  h += '      img.classList.add("sel")\n';
+  h += '    };\n';
+  h += '    thumbs.appendChild(img)\n';
+  h += '  });\n';
   h += '  confirmCallback=onConfirm;\n';
   h += '  document.getElementById("confirmModal").style.display="flex"\n';
   h += '}\n';
 
   h += 'function postOne(id){var item=items.find(function(i){return i.id==id});if(!item)return;showConfirm(item,function(){doPost(item)})}\n';
 
-  // Do post — send full-res images to eBay (server handles upload)
   h += 'function doPost(item){\n';
   h += '  item.status="posting";refresh(item);\n';
   h += '  var mi=item.mainIdx||0;\n';
-  h += '  var orderedFiles=[item.files[mi]].concat(item.files.filter(function(_,i){return i!==mi}));\n';
+  h += '  var ebayFiles=item.files.length>1?item.files.slice(0,-1):item.files;\n';
+  h += '  var orderedFiles=[ebayFiles[mi]].concat(ebayFiles.filter(function(_,i){return i!==mi}));\n';
   h += '  var promises=orderedFiles.map(function(f){return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res({data:r.result.split(",")[1],mimeType:f.type||"image/jpeg"})};r.onerror=rej;r.readAsDataURL(f)})});\n';
   h += '  Promise.all(promises).then(function(images){\n';
+  h += '    var ebayTok=localStorage.getItem("fa_ek")||"";\n';
   h += '    return fetch("/post-listing",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({\n';
-  h += '      listing:{title:item.title,author:item.author,bookTitle:item.bookTitle,format:item.format,language:item.language,\n';
-  h += '        description:item.desc,genre:item.genre,publisher:item.publisher,publicationYear:item.publicationYear,\n';
-  h += '        isbn:item.isbn,topic:item.topic,price:item.price,condition:item.condition,firstEdition:item.firstEdition,\n';
-  h += '        weightLbs:item.weightLbs,weightOz:item.weightOz},\n';
+  h += '      ebayToken:ebayTok,\n';
+  h += '      listing:{title:item.title,author:item.author,bookTitle:item.bookTitle,format:item.format,language:item.language,description:item.desc,genre:item.genre,publisher:item.publisher,publicationYear:item.publicationYear,isbn:item.isbn,topic:item.topic,price:item.price,condition:item.condition,conditionId:item.conditionId,weightLbs:item.weightLbs,weightOz:item.weightOz,location:item.location,firstEdition:item.firstEdition},\n';
   h += '      images:images})})\n';
   h += '    .then(function(r){return r.json()})\n';
   h += '    .then(function(d){\n';
-  h += '      if(d.success){item.ebayId=d.itemId;item.ebayUrl=d.url;item.status="posted";refresh(item);toast("Posted! eBay #"+d.itemId,"");updateStats()}\n';
-  h += '      else{item.status="done";refresh(item);toast("eBay error: "+(d.message||"unknown").substring(0,120),"err")}\n';
+  h += '      if(d.success){item.ebayId=d.itemId;item.ebayUrl=d.url;item.status="posted";toast("Posted! eBay #"+d.itemId,"");updateStats()}\n';
+  h += '      else{item.status="done";toast("eBay: "+(d.message||"error").substring(0,80),"err")}\n';
   h += '    })\n';
-  h += '    .catch(function(err){item.status="done";refresh(item);toast("Error: "+err.message,"err")})\n';
-  h += '  })\n';
+  h += '    .catch(function(err){item.status="done";toast("Error: "+err.message,"err")})\n';
+  h += '  }).then(function(){refresh(item)})\n';
   h += '}\n';
 
-  // Post all
   h += 'function postAll(){\n';
   h += '  var ready=items.filter(function(i){return i.status==="done"&&!i.ebayId});\n';
   h += '  if(!ready.length){toast("Analyze items first","err");return}\n';
   h += '  var i=0;\n';
-  h += '  function next(){\n';
-  h += '    if(i>=ready.length){toast("All done posting!","");return}\n';
-  h += '    var item=ready[i];\n';
-  h += '    showConfirm(item,function(){doPost(item);i++;setTimeout(next,4000)});\n';
-  h += '  }\n';
+  h += '  function next(){if(i>=ready.length){toast("All posted!","");return}var item=ready[i];showConfirm(item,function(){doPost(item);i++;setTimeout(next,3500)})}\n';
   h += '  next()\n';
   h += '}\n';
 
-  // Stats
   h += 'function updateStats(){\n';
-  h += '  var total=items.length;\n';
-  h += '  var analyzed=items.filter(function(i){return i.status==="done"||i.status==="posted"}).length;\n';
+  h += '  var total=items.length,analyzed=items.filter(function(i){return i.status==="done"||i.status==="posted"}).length;\n';
   h += '  var posted=items.filter(function(i){return i.ebayId}).length;\n';
   h += '  var photos=items.reduce(function(s,i){return s+i.files.length},0);\n';
-  h += '  var val=items.reduce(function(s,i){return s+(parseFloat(i.price)||0)},0);\n';
+  h += '  var val=items.filter(function(i){return i.price}).reduce(function(s,i){return s+(parseFloat(i.price)||0)},0);\n';
   h += '  document.getElementById("sPhotos").textContent=photos;\n';
   h += '  document.getElementById("sBooks").textContent=total;\n';
   h += '  document.getElementById("sAnalyzed").textContent=analyzed;\n';
@@ -621,37 +808,11 @@ app.get('/', function(req, res) {
   h += '  document.getElementById("sPosted").textContent=posted;\n';
   h += '}\n';
 
-  // Toast
-  h += 'function toast(msg,type){var w=document.getElementById("toasts"),t=document.createElement("div");t.className="toast"+(type?" "+type:"");t.textContent=msg;w.appendChild(t);setTimeout(function(){t.remove()},type==="err"?15000:6000)}\n';
+  h += 'function toast(msg,type){var w=document.getElementById("toasts"),t=document.createElement("div");t.className="toast"+(type?" "+type:"");t.textContent=msg;w.appendChild(t);setTimeout(function(){t.remove()},5000)}\n';
 
-  h += '<\/script></body></html>';
+  h += '</script></body></html>';
+
   res.send(h);
 });
 
-app.listen(PORT, function() {
-  console.log('FlipAI Bookslayer running on port ' + PORT);
-});
-
-
-// ============================================================
-// 😊 CONFIRMED WORKING TEMPLATE — March 13, 2026
-// ============================================================
-// STATUS: FULLY WORKING — books post to eBay with all photos
-//
-// COST: ~$0.03 per book (single Sonnet call, vision + pricing)
-//
-// KEY FACTS:
-// - Single claude-sonnet-4-20250514 call does everything
-// - Photo upload: XML Payload multipart, token in XML body
-// - Boundary uses ASCII '--' (never copy-paste — upload as file)
-// - EBAY_USER_TOKEN from Railway env var
-// - EBAY_APP_ID from Railway env var
-// - POSTAL_CODE from Railway env var (default 14701)
-// - 30-second gap between photos = new book
-// - Author defaults to "Unknown" to prevent eBay rejection
-// - Photos downscaled 800px for AI, full-res sent to eBay
-// - Parallel photo uploads (Promise.all)
-//
-// DEPLOY: Upload file to GitHub → Railway auto-deploys ~60s
-// NEVER paste code through text editors (em-dash corruption kills multipart)
-// ============================================================
+app.listen(PORT, function() { console.log('FlipAI Bookslayer running on port ' + PORT); });
