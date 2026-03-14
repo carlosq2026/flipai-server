@@ -166,13 +166,16 @@ app.post('/post-listing', async function(req, res) {
     if (listing.topic) specifics += '<NameValueList><Name>Topic</Name><Value>' + esc(listing.topic) + '</Value></NameValueList>';
     if (listing.firstEdition === 'Yes') specifics += '<NameValueList><n>Edition</n><Value>1st Edition</Value></NameValueList>';
 
-    // Weight and package dimensions
-    var totalOz = Math.round((parseFloat(listing.weightLbs) || 1) * 16);
-    var lbs = Math.floor(totalOz / 16);
-    var oz = totalOz % 16;
-    var pkgL = parseFloat(listing.pkgL) || 9;
-    var pkgW = parseFloat(listing.pkgW) || 6;
-    var pkgH = parseFloat(listing.pkgH) || 3;
+    // Weight and package dimensions — convert decimal lbs to whole lbs + oz
+    var weightFloat = parseFloat(listing.weightLbs) || 1;
+    var lbs = Math.floor(weightFloat);
+    var oz = Math.round((weightFloat - lbs) * 16);
+    // eBay requires at least 1 oz if lbs is 0
+    if (lbs === 0 && oz === 0) { lbs = 1; oz = 0; }
+    var pkgL = Math.round(parseFloat(listing.pkgL) || 9);
+    var pkgW = Math.round(parseFloat(listing.pkgW) || 6);
+    var pkgH = Math.round(parseFloat(listing.pkgH) || 3);
+    console.log('SHIPPING DEBUG: lbs='+lbs+' oz='+oz+' L='+pkgL+' W='+pkgW+' H='+pkgH);
 
     var xml = '<?xml version="1.0" encoding="utf-8"?>' +
       '<AddItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">' +
@@ -202,11 +205,12 @@ app.post('/post-listing', async function(req, res) {
       '<PackagingHandlingCosts>0.00</PackagingHandlingCosts>' +
       '</CalculatedShippingRate>' +
       '<ShippingPackageDetails>' +
-      '<WeightMajor unit="lbs">' + lbs + '</WeightMajor>' +
-      '<WeightMinor unit="oz">' + oz + '</WeightMinor>' +
-      '<PackageLength unit="in">' + pkgL + '</PackageLength>' +
-      '<PackageWidth unit="in">' + pkgW + '</PackageWidth>' +
-      '<PackageDepth unit="in">' + pkgH + '</PackageDepth>' +
+      '<MeasurementUnit>English</MeasurementUnit>' +
+      '<PackageDepth measurementSystem="English" unit="inches">' + pkgH + '</PackageDepth>' +
+      '<PackageLength measurementSystem="English" unit="inches">' + pkgL + '</PackageLength>' +
+      '<PackageWidth measurementSystem="English" unit="inches">' + pkgW + '</PackageWidth>' +
+      '<WeightMajor measurementSystem="English" unit="lbs">' + lbs + '</WeightMajor>' +
+      '<WeightMinor measurementSystem="English" unit="oz">' + oz + '</WeightMinor>' +
       '</ShippingPackageDetails>' +
       '</ShippingDetails>' +
       '<ReturnPolicy>' +
