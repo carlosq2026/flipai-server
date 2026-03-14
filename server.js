@@ -120,16 +120,16 @@ app.post('/post-listing', async function(req, res) {
       ? '<PictureDetails>' + uploadedUrls.map(function(u) { return '<PictureURL>' + u + '</PictureURL>'; }).join('') + '</PictureDetails>'
       : '';
 
-    // Condition mapping — matches eBay's actual book condition options exactly
+    // Condition mapping — real eBay condition IDs for Books
     var conditionMap = {
       'brand new':  '1000',
       'like new':   '2750',
-      'very good':  '4000',
-      'good':       '5000',
-      'acceptable': '6000'
+      'very good':  '2750',
+      'good':       '3000',
+      'acceptable': '4000'
     };
     var condRaw = (listing.condition || 'Good').trim().toLowerCase();
-    var conditionId = conditionMap[condRaw] || '5000';
+    var conditionId = conditionMap[condRaw] || '3000';
 
     // Category mapping
     var categoryMap = {
@@ -190,10 +190,11 @@ app.post('/post-listing', async function(req, res) {
       '<PostalCode>' + postal + '</PostalCode>' +
       '<Quantity>1</Quantity>' +
       '<ShippingDetails>' +
-      '<ShippingType>Calculated</ShippingType>' +
+      '<ShippingType>Flat</ShippingType>' +
       '<ShippingServiceOptions>' +
       '<ShippingServicePriority>1</ShippingServicePriority>' +
       '<ShippingService>USPSMedia</ShippingService>' +
+      '<ShippingServiceCost>3.99</ShippingServiceCost>' +
       '</ShippingServiceOptions>' +
       '</ShippingDetails>' +
       '<ReturnPolicy>' +
