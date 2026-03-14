@@ -120,9 +120,8 @@ app.post('/post-listing', async function(req, res) {
       ? '<PictureDetails>' + uploadedUrls.map(function(u) { return '<PictureURL>' + u + '</PictureURL>'; }).join('') + '</PictureDetails>'
       : '';
 
-    // Condition IDs — only confirmed values used:
-    // 5000 = Good (confirmed live), 2750 = Like New (confirmed live)
-    // For books: 1000=Brand New, 2750=Like New, 3000=Very Good, 4000=Good, 5000=Acceptable
+    // Condition IDs — 100% confirmed by live eBay posts:
+    // 2750=Like New, 3000=Very Good, 4000=Good, 5000=Acceptable
     var conditionMap = {
       'brand new':  '1000',
       'like new':   '2750',
