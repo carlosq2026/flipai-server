@@ -120,16 +120,16 @@ app.post('/post-listing', async function(req, res) {
       ? '<PictureDetails>' + uploadedUrls.map(function(u) { return '<PictureURL>' + u + '</PictureURL>'; }).join('') + '</PictureDetails>'
       : '';
 
-    // Condition mapping — real eBay condition IDs for Books
+    // Condition mapping — eBay Books category (261186) specific IDs
     var conditionMap = {
       'brand new':  '1000',
       'like new':   '2750',
-      'very good':  '2750',
-      'good':       '3000',
-      'acceptable': '4000'
+      'very good':  '3000',
+      'good':       '4000',
+      'acceptable': '5000'
     };
     var condRaw = (listing.condition || 'Good').trim().toLowerCase();
-    var conditionId = conditionMap[condRaw] || '3000';
+    var conditionId = conditionMap[condRaw] || '4000';
 
     // Category mapping
     var categoryMap = {
