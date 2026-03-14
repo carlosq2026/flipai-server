@@ -120,8 +120,8 @@ app.post('/post-listing', async function(req, res) {
       ? '<PictureDetails>' + uploadedUrls.map(function(u) { return '<PictureURL>' + u + '</PictureURL>'; }).join('') + '</PictureDetails>'
       : '';
 
-    // Condition IDs — 100% confirmed by live eBay posts:
-    // 2750=Like New, 3000=Very Good, 4000=Good, 5000=Acceptable
+    // Condition IDs: 1000=Brand New, 2750=Like New confirmed working
+    // 3000=Very Good, 4000=Good, 5000=Acceptable per eBay Books spec
     var conditionMap = {
       'brand new':  '1000',
       'like new':   '2750',
@@ -131,6 +131,7 @@ app.post('/post-listing', async function(req, res) {
     };
     var condRaw = (listing.condition || 'Good').trim().toLowerCase();
     var conditionId = conditionMap[condRaw] || '4000';
+    console.log('CONDITION DEBUG: raw="'+listing.condition+'" condRaw="'+condRaw+'" conditionId='+conditionId);
     var condRaw = (listing.condition || 'Good').trim().toLowerCase();
     var conditionId = conditionMap[condRaw] || '4000';
 
