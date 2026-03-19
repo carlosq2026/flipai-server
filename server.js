@@ -167,14 +167,14 @@ app.post('/post-listing', async function(req, res) {
     if (listing.firstEdition === 'Yes') specifics += '<NameValueList><n>Edition</n><Value>1st Edition</Value></NameValueList>';
 
     // Weight and package dimensions — convert decimal lbs to whole lbs + oz
-    var weightFloat = parseFloat(listing.weightLbs) || 1;
+    var weightFloat = parseFloat(listing.weightLbs) || 2;
     var lbs = Math.floor(weightFloat);
     var oz = Math.round((weightFloat - lbs) * 16);
     // eBay requires at least 1 oz if lbs is 0
     if (lbs === 0 && oz === 0) { lbs = 1; oz = 0; }
-    var pkgL = Math.round(parseFloat(listing.pkgL) || 9);
-    var pkgW = Math.round(parseFloat(listing.pkgW) || 6);
-    var pkgH = Math.round(parseFloat(listing.pkgH) || 3);
+    var pkgL = Math.round(parseFloat(listing.pkgL) || 10);
+    var pkgW = Math.round(parseFloat(listing.pkgW) || 8);
+    var pkgH = Math.round(parseFloat(listing.pkgH) || 4);
     console.log('SHIPPING DEBUG: lbs='+lbs+' oz='+oz+' L='+pkgL+' W='+pkgW+' H='+pkgH);
 
     var xml = '<?xml version="1.0" encoding="utf-8"?>' +
@@ -460,7 +460,7 @@ app.get('/', function(req, res) {
   h += '    items.push({id:Date.now()+Math.random(),files:g,urls:g.map(function(f){return URL.createObjectURL(f)}),mainIdx:0,\n';
   h += '      status:"idle",title:"",author:"",bookTitle:"",format:"",language:"English",\n';
   h += '      desc:"",genre:"",publisher:"",publicationYear:"",isbn:"",topic:"",\n';
-  h += '      condition:"Good",firstEdition:"",price:10,min:5,max:20,avg:12,weightLbs:"",weightOz:"",pkgL:"",pkgW:"",pkgH:"",editCond:false,editDesc:false});\n';
+  h += '      condition:"Good",firstEdition:"",price:10,min:5,max:20,avg:12,weightLbs:"2",weightOz:"0",pkgL:"10",pkgW:"8",pkgH:"4",editCond:false,editDesc:false});\n';
   h += '  });\n';
   h += '  document.getElementById("statsWrap").style.display="block";\n';
   h += '  document.getElementById("gapInfo").textContent="Grouped "+imgs.length+" photos into "+groups.length+" books ("+GAP_SECONDS+"s gap)";\n';
@@ -518,10 +518,10 @@ app.get('/', function(req, res) {
   // Weight + Package L W H like eBay
   h += '    b+="<div class=\'row-lbl\'>Package weight &amp; dimensions</div>";\n';
   h += '    b+="<div class=\'pkg-row\'>";\n';
-  h += '    b+="<div><div class=\'pkg-lbl\'>Weight (lb)</div><input class=\'ef pkg-in\' type=\'number\' step=\'0.1\' placeholder=\'0\' value=\'"+(item.weightLbs||"")+"\' onchange=\'upd("+item.id+",\\"weightLbs\\",this.value)\'></div>";\n';
-  h += '    b+="<div><div class=\'pkg-lbl\'>L (in)</div><input class=\'ef pkg-in\' type=\'number\' step=\'0.1\' placeholder=\'0\' value=\'"+(item.pkgL||"")+"\' onchange=\'upd("+item.id+",\\"pkgL\\",this.value)\'></div>";\n';
-  h += '    b+="<div><div class=\'pkg-lbl\'>W (in)</div><input class=\'ef pkg-in\' type=\'number\' step=\'0.1\' placeholder=\'0\' value=\'"+(item.pkgW||"")+"\' onchange=\'upd("+item.id+",\\"pkgW\\",this.value)\'></div>";\n';
-  h += '    b+="<div><div class=\'pkg-lbl\'>H (in)</div><input class=\'ef pkg-in\' type=\'number\' step=\'0.1\' placeholder=\'0\' value=\'"+(item.pkgH||"")+"\' onchange=\'upd("+item.id+",\\"pkgH\\",this.value)\'></div>";\n';
+  h += '    b+="<div><div class=\'pkg-lbl\'>Weight (lb)</div><input class=\'ef pkg-in\' type=\'number\' step=\'0.1\' placeholder=\'2\' value=\'"+(item.weightLbs||"2")+"\' onchange=\'upd("+item.id+",\\"weightLbs\\",this.value)\'></div>";\n';
+  h += '    b+="<div><div class=\'pkg-lbl\'>L (in)</div><input class=\'ef pkg-in\' type=\'number\' step=\'0.1\' placeholder=\'10\' value=\'"+(item.pkgL||"10")+"\' onchange=\'upd("+item.id+",\\"pkgL\\",this.value)\'></div>";\n';
+  h += '    b+="<div><div class=\'pkg-lbl\'>W (in)</div><input class=\'ef pkg-in\' type=\'number\' step=\'0.1\' placeholder=\'8\' value=\'"+(item.pkgW||"8")+"\' onchange=\'upd("+item.id+",\\"pkgW\\",this.value)\'></div>";\n';
+  h += '    b+="<div><div class=\'pkg-lbl\'>H (in)</div><input class=\'ef pkg-in\' type=\'number\' step=\'0.1\' placeholder=\'4\' value=\'"+(item.pkgH||"4")+"\' onchange=\'upd("+item.id+",\\"pkgH\\",this.value)\'></div>";\n';
   h += '    b+="</div>";\n';
   // Price
   h += '    b+="<div class=\'row-lbl\'>Price $</div><input class=\'ef\' type=\'number\' value=\'"+item.price+"\' onchange=\'upd("+item.id+",\\"price\\",this.value)\'>";\n';
