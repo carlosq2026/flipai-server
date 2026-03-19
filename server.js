@@ -27,23 +27,81 @@ app.post('/verify', async function(req, res) {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── ANALYZE BOOK PHOTOS (single Sonnet call ~$0.03/book) ─────────────────────
+// ─── ANALYZE BOOK PHOTOS — Step 1: identify, Step 2: live price search ────────
 app.post('/analyze', async function(req, res) {
   var apiKey = req.body.apiKey;
   var images = req.body.images;
   if (!apiKey || !images || !images.length) return res.status(400).json({ error: 'Missing apiKey or images' });
   try {
+    // STEP 1 — Identify the book from photos
     var content = [];
     images.forEach(function(img) {
       content.push({ type: 'image', source: { type: 'base64', media_type: img.mimeType || 'image/jpeg', data: img.data } });
     });
-    content.push({ type: 'text', text: 'You are a professional book reseller. Analyze these book photos for eBay listing. Reply ONLY with raw JSON, no markdown, no explanation:\n{"title":"Full Title","author":"Author Name or Unknown","bookTitle":"Title Only","format":"Hardcover or Paperback or Trade Paperback","language":"English","description":"2-3 sentences describing the book and visible condition","genre":"Fiction or Nonfiction or Mystery etc","publisher":"Publisher Name or unknown","publicationYear":"YYYY or unknown","isbn":"ISBN if visible or unknown","topic":"main subject/topic","condition":"Brand New or Like New or Very Good or Good or Acceptable","firstEdition":"Yes if 1st edition stated on copyright page or cover, No otherwise","minPrice":5,"maxPrice":25,"avgPrice":12,"suggestedPrice":10}' });
-    var r = await fetch('https://api.anthropic.com/v1/messages', {
+    content.push({ type: 'text', text: 'You are a professional book reseller. Analyze these book photos for eBay listing. Reply ONLY with raw JSON, no markdown, no explanation:\n{"title":"Full Title","author":"Author Name or Unknown","bookTitle":"Title Only","format":"Hardcover or Paperback or Trade Paperback","language":"English","description":"2-3 sentences describing the book and visible condition","genre":"Fiction or Nonfiction or Mystery etc","publisher":"Publisher Name or unknown","publicationYear":"YYYY or unknown","isbn":"ISBN if visible or unknown","topic":"main subject/topic","condition":"Brand New or Like New or Very Good or Good or Acceptable","firstEdition":"Yes if 1st edition stated on copyright page or cover, No otherwise"}' });
+    var r1 = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 600, messages: [{ role: 'user', content: content }] })
     });
-    res.json(await r.json());
+    var d1 = await r1.json();
+    var t1 = (d1.content || []).map(function(b){ return b.text || ''; }).join('');
+    var s1 = t1.indexOf('{'), e1 = t1.lastIndexOf('}');
+    var bookInfo = {};
+    if (s1 >= 0 && e1 >= 0) { try { bookInfo = JSON.parse(t1.slice(s1, e1+1)); } catch(e) {} }
+
+    // STEP 2 — Live price search: eBay sold + ThriftBooks
+    var searchTitle = bookInfo.title || 'unknown book';
+    var searchAuthor = bookInfo.author || '';
+    var searchISBN = (bookInfo.isbn && bookInfo.isbn !== 'unknown') ? bookInfo.isbn : '';
+    var searchQuery = searchISBN
+      ? (searchISBN + ' ' + (bookInfo.format || ''))
+      : (searchTitle + ' ' + searchAuthor + ' ' + (bookInfo.format || '')).trim();
+
+    var pricePrompt = 'You are a book reselling pricing expert. Search for current market prices for this book and return ONLY raw JSON, no markdown.\n\n' +
+      'Book: ' + searchTitle + '\nAuthor: ' + searchAuthor + '\nFormat: ' + (bookInfo.format || 'unknown') + '\nCondition: ' + (bookInfo.condition || 'Good') + (searchISBN ? '\nISBN: ' + searchISBN : '') + '\n\n' +
+      'Search eBay SOLD/COMPLETED listings for this exact book to find what buyers actually paid. Also check ThriftBooks.com for their current listing price.\n\n' +
+      'Pricing logic:\n' +
+      '- ebaySoldAvg: average of recent eBay SOLD prices (what buyers actually paid)\n' +
+      '- thriftbooksPrice: ThriftBooks current price (this is your floor — if you list below this, you lose)\n' +
+      '- sweetSpot: the ideal listing price = undercut eBay sold avg by 15-20% to sell fast, but must be at least $1.50 above thriftbooksPrice to be worth listing. If thriftbooksPrice is within $2 of ebaySoldAvg, flag it as low margin.\n\n' +
+      'Reply ONLY with this JSON (use null if data not found):\n' +
+      '{"ebaySoldAvg":12.00,"ebaySoldCount":8,"ebaySoldLow":8.00,"ebaySoldHigh":18.00,"thriftbooksPrice":4.49,"sweetSpot":11.00,"minPrice":8.00,"maxPrice":18.00,"lowMargin":false,"priceNote":"Brief 1-sentence reason for sweetSpot"}';
+
+    var r2 = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'web-search-2025-03-05' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1024,
+        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+        messages: [{ role: 'user', content: pricePrompt }]
+      })
+    });
+    var d2 = await r2.json();
+    var t2 = (d2.content || []).map(function(b){ return b.text || ''; }).join('');
+    var s2 = t2.indexOf('{'), e2 = t2.lastIndexOf('}');
+    var priceInfo = { ebaySoldAvg: null, thriftbooksPrice: null, sweetSpot: null, minPrice: 5, maxPrice: 20, lowMargin: false, priceNote: '' };
+    if (s2 >= 0 && e2 >= 0) { try { priceInfo = Object.assign(priceInfo, JSON.parse(t2.slice(s2, e2+1))); } catch(e) {} }
+
+    // Merge and return as a single response the client already understands
+    var merged = Object.assign({}, bookInfo, {
+      minPrice: priceInfo.minPrice || 5,
+      maxPrice: priceInfo.maxPrice || 20,
+      avgPrice: priceInfo.ebaySoldAvg || 10,
+      suggestedPrice: priceInfo.sweetSpot || priceInfo.ebaySoldAvg || 10,
+      ebaySoldAvg: priceInfo.ebaySoldAvg,
+      ebaySoldCount: priceInfo.ebaySoldCount,
+      ebaySoldLow: priceInfo.ebaySoldLow,
+      ebaySoldHigh: priceInfo.ebaySoldHigh,
+      thriftbooksPrice: priceInfo.thriftbooksPrice,
+      sweetSpot: priceInfo.sweetSpot,
+      lowMargin: priceInfo.lowMargin,
+      priceNote: priceInfo.priceNote
+    });
+
+    // Return in same shape the client expects (content array with text block)
+    res.json({ content: [{ type: 'text', text: JSON.stringify(merged) }] });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -482,7 +540,11 @@ app.get('/', function(req, res) {
   h += '  else if(item.status==="posting"){b+="<div style=\'color:#ffb800;padding:8px 0\'>Uploading & posting to eBay...</div>";}\n';
   h += '  else if(item.title){\n';
   // Price range
-  h += '    b+="<div class=\'price-box\'>Range $"+item.min+"-$"+item.max+" &bull; Avg $"+item.avg+"<br><span class=\'price-big\'>List: $"+item.price+"</span></div>";\n';
+  h += '    var ebayLine=item.ebaySoldAvg?"eBay sold: $"+item.ebaySoldAvg.toFixed(2)+(item.ebaySoldCount?" ("+item.ebaySoldCount+" sales)":"")+" &bull; low $"+( item.ebaySoldLow?item.ebaySoldLow.toFixed(2):"?")+ " high $"+(item.ebaySoldHigh?item.ebaySoldHigh.toFixed(2):"?"):"eBay sold: searching...";\n';
+  h += '    var tbLine=item.thriftbooksPrice?"ThriftBooks: $"+item.thriftbooksPrice.toFixed(2)+" (your floor)":"ThriftBooks: not listed";\n';
+  h += '    var marginWarn=item.lowMargin?"<span style=\'color:#ff6b6b;font-size:0.7rem\'> ⚠ Low margin</span>":"";\n';
+  h += '    var noteStr=item.priceNote?"<div style=\'color:#8888aa;font-size:0.7rem;margin-top:3px\'>" +item.priceNote+"</div>":"";\n';
+  h += '    b+="<div class=\'price-box\'><div style=\'color:#7ec8e3;font-size:0.75rem\'>"+ebayLine+"</div><div style=\'color:#a0c4a0;font-size:0.75rem;margin-top:2px\'>"+tbLine+"</div>"+noteStr+"<div style=\'margin-top:5px\'><span class=\'price-big\'>Sweet spot: $"+item.price+"</span>"+marginWarn+"</div></div>";\n';
   // Title
   h += '    b+="<div class=\'row-lbl\'>Title</div><input class=\'ef\' value=\'"+esc(item.title)+"\' onchange=\'upd("+item.id+",\\"title\\",this.value)\'>";\n';
   // Author + Format
@@ -616,6 +678,13 @@ app.get('/', function(req, res) {
   h += '      item.max=p.maxPrice||20;\n';
   h += '      item.avg=p.avgPrice||12;\n';
   h += '      item.price=p.suggestedPrice||12;\n';
+  h += '      item.ebaySoldAvg=p.ebaySoldAvg||null;\n';
+  h += '      item.ebaySoldCount=p.ebaySoldCount||null;\n';
+  h += '      item.ebaySoldLow=p.ebaySoldLow||null;\n';
+  h += '      item.ebaySoldHigh=p.ebaySoldHigh||null;\n';
+  h += '      item.thriftbooksPrice=p.thriftbooksPrice||null;\n';
+  h += '      item.lowMargin=p.lowMargin||false;\n';
+  h += '      item.priceNote=p.priceNote||"";\n';
   h += '      item.status="done";\n';
   h += '    })\n';
   h += '    .catch(function(err){item.status="error";item.errorMsg=err.message.substring(0,100);toast("Error: "+item.errorMsg,"err")})\n';
