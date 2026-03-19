@@ -51,29 +51,41 @@ app.post('/analyze', async function(req, res) {
     var bookInfo = {};
     if (s1 >= 0 && e1 >= 0) { try { bookInfo = JSON.parse(t1.slice(s1, e1+1)); } catch(e) {} }
 
-    // STEP 2 — Live price search: eBay sold + ThriftBooks (non-fatal — fallback to defaults if it fails)
-    var priceInfo = { ebaySoldAvg: null, ebaySoldCount: null, ebaySoldLow: null, ebaySoldHigh: null, thriftbooksPrice: null, sweetSpot: null, minPrice: 5, maxPrice: 20, lowMargin: false, priceNote: '' };
+    // STEP 2 — Live price research: eBay sold + Amazon used + ThriftBooks (non-fatal)
+    var priceInfo = { ebaySoldAvg: null, ebaySoldCount: null, ebaySoldLow: null, ebaySoldHigh: null, amazonUsedLow: null, thriftbooksPrice: null, sweetSpot: null, minPrice: 5, maxPrice: 20, lowMargin: false, doNotList: false, priceNote: '' };
     try {
       var searchTitle = bookInfo.title || 'unknown book';
       var searchAuthor = bookInfo.author || '';
       var searchISBN = (bookInfo.isbn && bookInfo.isbn !== 'unknown') ? bookInfo.isbn : '';
+      var bookCondition = bookInfo.condition || 'Good';
 
-      var pricePrompt = 'You are a book reselling pricing expert. Search for current market prices for this book and return ONLY raw JSON, no markdown.\n\n' +
-        'Book: ' + searchTitle + '\nAuthor: ' + searchAuthor + '\nFormat: ' + (bookInfo.format || 'unknown') + '\nCondition: ' + (bookInfo.condition || 'Good') + (searchISBN ? '\nISBN: ' + searchISBN : '') + '\n\n' +
-        'Search eBay SOLD/COMPLETED listings for this exact book to find what buyers actually paid. Also check ThriftBooks.com for their current listing price.\n\n' +
-        'Pricing logic:\n' +
-        '- ebaySoldAvg: average of recent eBay SOLD prices (what buyers actually paid)\n' +
-        '- thriftbooksPrice: ThriftBooks current price (this is your floor — if you cannot beat it by at least $1.50, flag lowMargin)\n' +
-        '- sweetSpot: undercut eBay sold avg by 15-20% to sell fast, but must be at least $1.50 above thriftbooksPrice. Round to nearest $0.50.\n\n' +
-        'Reply ONLY with this JSON (use null if data not found):\n' +
-        '{"ebaySoldAvg":12.00,"ebaySoldCount":8,"ebaySoldLow":8.00,"ebaySoldHigh":18.00,"thriftbooksPrice":4.49,"sweetSpot":10.00,"minPrice":8.00,"maxPrice":18.00,"lowMargin":false,"priceNote":"1-sentence reason"}';
+      var pricePrompt = 'You are an expert book reseller who flips books on eBay for profit. Research current prices for this book across all 3 sources and return ONLY raw JSON, no markdown, no explanation.\n\n' +
+        'BOOK: ' + searchTitle + '\n' +
+        'AUTHOR: ' + searchAuthor + '\n' +
+        'FORMAT: ' + (bookInfo.format || 'unknown') + '\n' +
+        'CONDITION: ' + bookCondition + '\n' +
+        (searchISBN ? 'ISBN: ' + searchISBN + '\n' : '') +
+        '\nSEARCH INSTRUCTIONS:\n' +
+        '1. Search eBay COMPLETED/SOLD listings (last 90 days) — find ebaySoldAvg, ebaySoldLow, ebaySoldHigh, ebaySoldCount\n' +
+        '2. Search Amazon.com for this book — find the lowest NEW price and lowest USED price (amazonUsedLow)\n' +
+        '3. Search ThriftBooks.com for this exact title — find their listed price (thriftbooksPrice)\n' +
+        '\nPRICING FORMULA (think like a pro reseller):\n' +
+        '- Base: ebaySoldAvg × 0.92 (undercut by 5-10% to be the best deal on eBay)\n' +
+        '- Condition boost: if Brand New or Like New, only undercut 5% (ebaySoldAvg × 0.95)\n' +
+        '- Amazon cap: sweetSpot must be at least $1.00 below amazonUsedLow (buyers compare)\n' +
+        '- ThriftBooks floor: sweetSpot must be at least $2.00 above thriftbooksPrice (or it is not worth listing)\n' +
+        '- Round to nearest $0.50 for clean pricing\n' +
+        '- If sweetSpot cannot clear the ThriftBooks floor by $2.00, set doNotList=true and explain why\n' +
+        '- minPrice = ebaySoldLow, maxPrice = ebaySoldHigh\n' +
+        '\nReply ONLY with this JSON (null for any value you cannot find):\n' +
+        '{"ebaySoldAvg":12.00,"ebaySoldCount":8,"ebaySoldLow":8.00,"ebaySoldHigh":18.00,"amazonUsedLow":14.99,"thriftbooksPrice":4.49,"sweetSpot":11.00,"minPrice":8.00,"maxPrice":18.00,"lowMargin":false,"doNotList":false,"priceNote":"eBay avg $12, undercutting to $11; ThriftBooks at $4.49 leaves strong margin"}';
 
       var r2 = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'web-search-2025-03-05' },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
-          max_tokens: 1024,
+          max_tokens: 1500,
           tools: [{ type: 'web_search_20250305', name: 'web_search' }],
           messages: [{ role: 'user', content: pricePrompt }]
         })
@@ -82,9 +94,9 @@ app.post('/analyze', async function(req, res) {
       var t2 = (d2.content || []).map(function(b){ return b.text || ''; }).join('');
       var s2 = t2.indexOf('{'), e2 = t2.lastIndexOf('}');
       if (s2 >= 0 && e2 >= 0) { try { priceInfo = Object.assign(priceInfo, JSON.parse(t2.slice(s2, e2+1))); } catch(e) {} }
+      console.log('PRICE DEBUG:', JSON.stringify(priceInfo));
     } catch(priceErr) {
       console.error('Price search failed (non-fatal):', priceErr.message);
-      // priceInfo stays as defaults — book info still returns fine
     }
 
     // Merge and return in the shape the client expects
@@ -97,9 +109,11 @@ app.post('/analyze', async function(req, res) {
       ebaySoldCount: priceInfo.ebaySoldCount,
       ebaySoldLow: priceInfo.ebaySoldLow,
       ebaySoldHigh: priceInfo.ebaySoldHigh,
+      amazonUsedLow: priceInfo.amazonUsedLow,
       thriftbooksPrice: priceInfo.thriftbooksPrice,
       sweetSpot: priceInfo.sweetSpot,
       lowMargin: priceInfo.lowMargin,
+      doNotList: priceInfo.doNotList,
       priceNote: priceInfo.priceNote
     });
 
@@ -542,11 +556,13 @@ app.get('/', function(req, res) {
   h += '  else if(item.status==="posting"){b+="<div style=\'color:#ffb800;padding:8px 0\'>Uploading & posting to eBay...</div>";}\n';
   h += '  else if(item.title){\n';
   // Price range
-  h += '    var ebayLine=item.ebaySoldAvg?"eBay sold: $"+item.ebaySoldAvg.toFixed(2)+(item.ebaySoldCount?" ("+item.ebaySoldCount+" sales)":"")+" &bull; low $"+( item.ebaySoldLow?item.ebaySoldLow.toFixed(2):"?")+ " high $"+(item.ebaySoldHigh?item.ebaySoldHigh.toFixed(2):"?"):"eBay sold: searching...";\n';
-  h += '    var tbLine=item.thriftbooksPrice?"ThriftBooks: $"+item.thriftbooksPrice.toFixed(2)+" (your floor)":"ThriftBooks: not listed";\n';
-  h += '    var marginWarn=item.lowMargin?"<span style=\'color:#ff6b6b;font-size:0.7rem\'> ⚠ Low margin</span>":"";\n';
-  h += '    var noteStr=item.priceNote?"<div style=\'color:#8888aa;font-size:0.7rem;margin-top:3px\'>" +item.priceNote+"</div>":"";\n';
-  h += '    b+="<div class=\'price-box\'><div style=\'color:#7ec8e3;font-size:0.75rem\'>"+ebayLine+"</div><div style=\'color:#a0c4a0;font-size:0.75rem;margin-top:2px\'>"+tbLine+"</div>"+noteStr+"<div style=\'margin-top:5px\'><span class=\'price-big\'>Sweet spot: $"+item.price+"</span>"+marginWarn+"</div></div>";\n';
+  h += '    var dnlBanner=item.doNotList?"<div style=\'background:#3a0000;border:1px solid #ff4444;border-radius:4px;padding:4px 7px;margin-bottom:5px;color:#ff6b6b;font-size:0.72rem;font-weight:bold\'>🚫 DO NOT LIST — margin too thin vs ThriftBooks</div>":"";\n';
+  h += '    var ebayLine=item.ebaySoldAvg?"📦 eBay sold: $"+item.ebaySoldAvg.toFixed(2)+(item.ebaySoldCount?" ("+item.ebaySoldCount+" sales)":"")+"  "+( item.ebaySoldLow?"[$"+item.ebaySoldLow.toFixed(2)+"–$"+(item.ebaySoldHigh?item.ebaySoldHigh.toFixed(2):"?")+"]": ""):"📦 eBay sold: live data loading...";\n';
+  h += '    var amzLine=item.amazonUsedLow?"🛒 Amazon used: $"+item.amazonUsedLow.toFixed(2)+" (ceiling)": "🛒 Amazon: not found";\n';
+  h += '    var tbLine=item.thriftbooksPrice?"📚 ThriftBooks: $"+item.thriftbooksPrice.toFixed(2)+" (floor)":"📚 ThriftBooks: not listed";\n';
+  h += '    var marginWarn=item.lowMargin?" <span style=\'color:#ff6b6b;font-size:0.68rem\'>⚠ thin margin</span>":"";\n';
+  h += '    var noteStr=item.priceNote?"<div style=\'color:#8888aa;font-size:0.68rem;margin-top:4px;font-style:italic\'>"+item.priceNote+"</div>":"";\n';
+  h += '    b+="<div class=\'price-box\'>"+dnlBanner+"<div style=\'color:#7ec8e3;font-size:0.73rem\'>"+ebayLine+"</div><div style=\'color:#e8a87c;font-size:0.73rem;margin-top:2px\'>"+amzLine+"</div><div style=\'color:#a0c4a0;font-size:0.73rem;margin-top:2px\'>"+tbLine+"</div>"+noteStr+"<div style=\'margin-top:6px\'><span class=\'price-big\'>"+( item.doNotList?"🚫 Skip":"Sweet spot: $"+item.price)+"</span>"+marginWarn+"</div></div>";\n';
   // Title
   h += '    b+="<div class=\'row-lbl\'>Title</div><input class=\'ef\' value=\'"+esc(item.title)+"\' onchange=\'upd("+item.id+",\\"title\\",this.value)\'>";\n';
   // Author + Format
@@ -685,7 +701,9 @@ app.get('/', function(req, res) {
   h += '      item.ebaySoldLow=p.ebaySoldLow||null;\n';
   h += '      item.ebaySoldHigh=p.ebaySoldHigh||null;\n';
   h += '      item.thriftbooksPrice=p.thriftbooksPrice||null;\n';
+  h += '      item.amazonUsedLow=p.amazonUsedLow||null;\n';
   h += '      item.lowMargin=p.lowMargin||false;\n';
+  h += '      item.doNotList=p.doNotList||false;\n';
   h += '      item.priceNote=p.priceNote||"";\n';
   h += '      item.status="done";\n';
   h += '    })\n';
