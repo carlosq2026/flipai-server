@@ -51,38 +51,65 @@ app.post('/analyze', async function(req, res) {
     var bookInfo = { minPrice: 5, maxPrice: 20, avgPrice: 10, suggestedPrice: 10 };
     if (s1 >= 0 && e1 >= 0) { try { bookInfo = Object.assign(bookInfo, JSON.parse(t1.slice(s1, e1+1))); } catch(e) {} }
 
-    // STEP 2 — eBay live search: sold + active listings (non-fatal)
-    var priceInfo = { ebaySoldAvg: null, ebaySoldLow: null, ebaySoldHigh: null, ebaySoldCount: null, ebayActiveLow: null, sweetSpot: null, priceNote: '' };
+    // STEP 2 — eBay live search, branching on isFirstEd flag (non-fatal)
+    var isFirstEd = req.body.isFirstEd === true;
+    var priceInfo = { ebaySoldAvg: null, ebaySoldLow: null, ebaySoldHigh: null, ebaySoldCount: null, ebayActiveLow: null, sweetSpot: null, priceNote: '', ebaySearchStatus: '' };
     try {
-      var isbn = (bookInfo.isbn && bookInfo.isbn !== 'unknown') ? bookInfo.isbn : '';
-      var searchQ = isbn ? isbn : ((bookInfo.title || '') + ' ' + (bookInfo.author || '') + ' ' + (bookInfo.format || '')).trim();
-      var cond = bookInfo.condition || 'Good';
+      var isbn   = (bookInfo.isbn && bookInfo.isbn !== 'unknown') ? bookInfo.isbn : '';
+      var title  = bookInfo.title  || 'unknown';
+      var author = bookInfo.author || '';
+      var format = bookInfo.format || '';
+      var cond   = bookInfo.condition || 'Good';
 
-      var pricePrompt = 'You are an expert eBay book reseller. Search eBay for this book and return ONLY raw JSON, no markdown.\n\n' +
-        'BOOK: ' + (bookInfo.title || 'unknown') + '\n' +
-        'AUTHOR: ' + (bookInfo.author || '') + '\n' +
-        'FORMAT: ' + (bookInfo.format || '') + '\n' +
-        'CONDITION: ' + cond + '\n' +
-        (isbn ? 'ISBN: ' + isbn + '\n' : '') +
-        '\nDo TWO searches:\n' +
-        '1. eBay COMPLETED/SOLD listings (last 90 days) for this book — get real sold prices\n' +
-        '2. eBay ACTIVE listings for this book — get the lowest current asking price\n' +
-        '\nPRICING FORMULA:\n' +
-        '- sweetSpot = ebaySoldAvg × 0.92 (undercut sold avg by ~8% to be the best deal)\n' +
-        '- If condition is Brand New or Like New: sweetSpot = ebaySoldAvg × 0.95\n' +
-        '- sweetSpot must be at least $0.50 below ebayActiveLow (beat the competition)\n' +
-        '- Round sweetSpot to nearest $0.50\n' +
-        '- minPrice = ebaySoldLow, maxPrice = ebaySoldHigh\n' +
-        '- priceNote: one sentence explaining the sweet spot\n\n' +
-        'Reply ONLY with this JSON (null if not found):\n' +
-        '{"ebaySoldAvg":12.00,"ebaySoldLow":8.00,"ebaySoldHigh":18.00,"ebaySoldCount":6,"ebayActiveLow":13.00,"sweetSpot":11.00,"minPrice":8.00,"maxPrice":18.00,"priceNote":"6 sold at avg $12, active listings from $13 — listing at $11 to move fast"}';
+      var pricePrompt;
+      if (isFirstEd) {
+        // ── FIRST EDITION PATH — 3 targeted searches ──
+        pricePrompt = 'You are an expert rare/collectible book reseller. Search eBay specifically for FIRST EDITION copies of this book and return ONLY raw JSON, no markdown.\n\n' +
+          'BOOK: ' + title + '\n' +
+          'AUTHOR: ' + author + '\n' +
+          'FORMAT: ' + format + '\n' +
+          'CONDITION: ' + cond + '\n' +
+          (isbn ? 'ISBN: ' + isbn + '\n' : '') +
+          '\nDo THREE searches:\n' +
+          '1. eBay COMPLETED/SOLD: "' + title + ' first edition" — sold prices for 1st editions only\n' +
+          '2. eBay COMPLETED/SOLD: "' + title + ' ' + author + ' first printing" — catch alternate phrasing\n' +
+          '3. eBay ACTIVE listings: "' + title + ' first edition" — lowest current ask\n' +
+          '\nPRICING FORMULA for first editions:\n' +
+          '- Use ONLY first edition sold comps — ignore regular edition prices completely\n' +
+          '- sweetSpot = ebaySoldAvg × 0.92 (undercut by 8% to sell faster than competition)\n' +
+          '- If condition is Like New or Very Good: sweetSpot = ebaySoldAvg × 0.95 (condition holds premium)\n' +
+          '- sweetSpot must be at least $1.00 below ebayActiveLow\n' +
+          '- Round to nearest $0.50\n' +
+          '- priceNote must mention it is a first edition price\n\n' +
+          'Reply ONLY with this JSON (null if not found):\n' +
+          '{"ebaySoldAvg":55.00,"ebaySoldLow":35.00,"ebaySoldHigh":95.00,"ebaySoldCount":4,"ebayActiveLow":65.00,"sweetSpot":50.00,"minPrice":35.00,"maxPrice":95.00,"ebaySearchStatus":"1st","priceNote":"4 first editions sold avg $55, active from $65 — listing at $50 to be best deal"}';
+      } else {
+        // ── STANDARD PATH — 2 searches ──
+        pricePrompt = 'You are an expert eBay book reseller. Search eBay for this book and return ONLY raw JSON, no markdown.\n\n' +
+          'BOOK: ' + title + '\n' +
+          'AUTHOR: ' + author + '\n' +
+          'FORMAT: ' + format + '\n' +
+          'CONDITION: ' + cond + '\n' +
+          (isbn ? 'ISBN: ' + isbn + '\n' : '') +
+          '\nDo TWO searches:\n' +
+          '1. eBay COMPLETED/SOLD listings (last 90 days) — real sold prices\n' +
+          '2. eBay ACTIVE listings — lowest current asking price\n' +
+          '\nPRICING FORMULA:\n' +
+          '- sweetSpot = ebaySoldAvg × 0.92 (undercut by ~8% to be the best deal)\n' +
+          '- If Brand New or Like New: sweetSpot = ebaySoldAvg × 0.95\n' +
+          '- sweetSpot must be at least $0.50 below ebayActiveLow\n' +
+          '- Round to nearest $0.50\n' +
+          '- Set ebaySearchStatus to "found" if you found real sold data, "notfound" if you could not find matching listings\n\n' +
+          'Reply ONLY with this JSON (null if not found):\n' +
+          '{"ebaySoldAvg":12.00,"ebaySoldLow":8.00,"ebaySoldHigh":18.00,"ebaySoldCount":6,"ebayActiveLow":13.00,"sweetSpot":11.00,"minPrice":8.00,"maxPrice":18.00,"ebaySearchStatus":"found","priceNote":"6 sold avg $12, active from $13 — listing at $11 to move fast"}';
+      }
 
       var r2 = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'web-search-2025-03-05' },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
-          max_tokens: 1024,
+          max_tokens: 1500,
           tools: [{ type: 'web_search_20250305', name: 'web_search' }],
           messages: [{ role: 'user', content: pricePrompt }]
         })
@@ -91,23 +118,30 @@ app.post('/analyze', async function(req, res) {
       var t2 = (d2.content || []).map(function(b){ return b.text || ''; }).join('');
       var s2 = t2.indexOf('{'), e2 = t2.lastIndexOf('}');
       if (s2 >= 0 && e2 >= 0) { try { priceInfo = Object.assign(priceInfo, JSON.parse(t2.slice(s2, e2+1))); } catch(e) {} }
-      console.log('PRICE DEBUG:', JSON.stringify(priceInfo));
+      // If no status came back, infer from data
+      if (!priceInfo.ebaySearchStatus) priceInfo.ebaySearchStatus = priceInfo.ebaySoldAvg ? (isFirstEd ? '1st' : 'found') : 'notfound';
+      console.log('PRICE DEBUG isFirstEd=' + isFirstEd + ':', JSON.stringify(priceInfo));
     } catch(priceErr) {
       console.error('eBay price search failed (non-fatal):', priceErr.message);
+      priceInfo.ebaySearchStatus = 'notfound';
     }
+
+    // If first edition flagged, force firstEdition=Yes on the merged result
+    if (isFirstEd) bookInfo.firstEdition = 'Yes';
 
     // Merge — live eBay data wins over Step 1 estimates if found
     var merged = Object.assign({}, bookInfo, {
-      minPrice:       priceInfo.minPrice      || bookInfo.minPrice      || 5,
-      maxPrice:       priceInfo.maxPrice      || bookInfo.maxPrice      || 20,
-      avgPrice:       priceInfo.ebaySoldAvg   || bookInfo.avgPrice      || 10,
-      suggestedPrice: priceInfo.sweetSpot     || bookInfo.suggestedPrice || 10,
-      ebaySoldAvg:    priceInfo.ebaySoldAvg,
-      ebaySoldLow:    priceInfo.ebaySoldLow,
-      ebaySoldHigh:   priceInfo.ebaySoldHigh,
-      ebaySoldCount:  priceInfo.ebaySoldCount,
-      ebayActiveLow:  priceInfo.ebayActiveLow,
-      priceNote:      priceInfo.priceNote
+      minPrice:         priceInfo.minPrice       || bookInfo.minPrice      || 5,
+      maxPrice:         priceInfo.maxPrice        || bookInfo.maxPrice      || 20,
+      avgPrice:         priceInfo.ebaySoldAvg     || bookInfo.avgPrice      || 10,
+      suggestedPrice:   priceInfo.sweetSpot       || bookInfo.suggestedPrice || 10,
+      ebaySoldAvg:      priceInfo.ebaySoldAvg,
+      ebaySoldLow:      priceInfo.ebaySoldLow,
+      ebaySoldHigh:     priceInfo.ebaySoldHigh,
+      ebaySoldCount:    priceInfo.ebaySoldCount,
+      ebayActiveLow:    priceInfo.ebayActiveLow,
+      ebaySearchStatus: priceInfo.ebaySearchStatus,
+      priceNote:        priceInfo.priceNote
     });
 
     res.json({ content: [{ type: 'text', text: JSON.stringify(merged) }] });
@@ -533,7 +567,7 @@ app.get('/', function(req, res) {
   h += '    items.push({id:Date.now()+Math.random(),files:g,urls:g.map(function(f){return URL.createObjectURL(f)}),mainIdx:0,\n';
   h += '      status:"idle",title:"",author:"",bookTitle:"",format:"",language:"English",\n';
   h += '      desc:"",genre:"",publisher:"",publicationYear:"",isbn:"",topic:"",\n';
-  h += '      condition:"Good",firstEdition:"",price:10,min:5,max:20,avg:12,weightLbs:"2",weightOz:"0",pkgL:"10",pkgW:"8",pkgH:"4",editCond:false,editDesc:false});\n';
+  h += '      condition:"Good",firstEdition:"",isFirstEd:false,price:10,min:5,max:20,avg:12,weightLbs:"2",weightOz:"0",pkgL:"10",pkgW:"8",pkgH:"4",editCond:false,editDesc:false,ebaySearchStatus:""});\n';
   h += '  });\n';
   h += '  document.getElementById("statsWrap").style.display="block";\n';
   h += '  document.getElementById("gapInfo").textContent="Grouped "+imgs.length+" photos into "+groups.length+" books ("+GAP_SECONDS+"s gap)";\n';
@@ -557,9 +591,10 @@ app.get('/', function(req, res) {
   // Price range
   h += '    var soldLine=item.ebaySoldAvg?"Sold avg: $"+item.ebaySoldAvg.toFixed(2)+(item.ebaySoldCount?" ("+item.ebaySoldCount+" sales)":"")+" · low $"+(item.ebaySoldLow?item.ebaySoldLow.toFixed(2):"?")+" high $"+(item.ebaySoldHigh?item.ebaySoldHigh.toFixed(2):"?"): "";\n';
   h += '    var activeLine=item.ebayActiveLow?"Active low: $"+item.ebayActiveLow.toFixed(2):"";\n';
-  h += '    var ebayBlock=(soldLine||activeLine)?"<div style=\'color:#7ec8e3;font-size:0.72rem;margin-bottom:3px\'>"+soldLine+(soldLine&&activeLine?" · ":"")+activeLine+"</div>":"";\n';
+  h += '    var searchTag=item.ebaySearchStatus==="found"?"<span style=\'color:#00e5a0;font-size:0.68rem\'>✓ eBay match found</span>":item.ebaySearchStatus==="notfound"?"<span style=\'color:#ff9944;font-size:0.68rem\'>⚠ No eBay match — estimate used</span>":item.ebaySearchStatus==="1st"?"<span style=\'color:#ffd700;font-size:0.68rem\'>⭐ 1st Edition eBay search</span>":"";\n';
+  h += '    var ebayBlock=(soldLine||activeLine)?"<div style=\'color:#7ec8e3;font-size:0.72rem;margin-bottom:2px\'>"+soldLine+(soldLine&&activeLine?" · ":"")+activeLine+"</div>":"";\n';
   h += '    var noteStr=item.priceNote?"<div style=\'color:#8888aa;font-size:0.68rem;font-style:italic;margin-bottom:4px\'>"+item.priceNote+"</div>":"";\n';
-  h += '    b+="<div class=\'price-box\'>"+ebayBlock+noteStr+"Range $"+item.min+"-$"+item.max+" &bull; Avg $"+item.avg+"<br><span class=\'price-big\'>Sweet spot: $"+item.price+"</span></div>";\n';
+  h += '    b+="<div class=\'price-box\'>"+searchTag+(searchTag?"<br>":"")+ebayBlock+noteStr+"Range $"+item.min+"-$"+item.max+" &bull; Avg $"+item.avg+"<br><span class=\'price-big\'>Sweet spot: $"+item.price+"</span></div>";\n';
   // Title
   h += '    b+="<div class=\'row-lbl\'>Title</div><input class=\'ef\' value=\'"+esc(item.title)+"\' onchange=\'upd("+item.id+",\\"title\\",this.value)\'>";\n';
   // Author + Format
@@ -584,7 +619,13 @@ app.get('/', function(req, res) {
   h += '      b+="<div class=\'cond-display\' onclick=\'toggleCond("+item.id+")\'>"+item.condition+"<span class=\'cond-arrow\'>&#8250;</span></div>";\n';
   h += '    }\n';
   // 1st edition badge
-  h += '    if(item.firstEdition==="Yes"){b+="<div class=\'badge-1st\'>⭐ 1st Edition</div>";}\n';
+  h += '    var chkId="fe"+item.id;\n';
+  h += '    b+="<div style=\'display:flex;align-items:center;gap:8px;margin:6px 0 4px\'>";\n';
+  h += '    b+="<input type=\'checkbox\' id=\'"+chkId+"\' style=\'width:16px;height:16px;cursor:pointer;accent-color:#00e5a0\' "+(item.isFirstEd?"checked":"")+" onchange=\'updFirstEd("+item.id+",this.checked)\'>";\n';
+  h += '    b+="<label for=\'"+chkId+"\' style=\'color:"+(item.isFirstEd?"#00e5a0":"#8888aa")+";font-size:0.78rem;cursor:pointer;user-select:none\'>";\n';
+  h += '    b+=(item.isFirstEd?"⭐ 1st Edition — premium search active":"1st Edition? (check to enable premium eBay search)");\n';
+  h += '    b+="</label></div>";\n';
+  h += '    if(item.firstEdition==="Yes"||item.isFirstEd){b+="<div class=\'badge-1st\'>⭐ 1st Edition</div>";}\n';
   // Description
   h += '    b+="<div class=\'row-lbl\'>Description <button class=\'edit-link\' onclick=\'toggleDesc("+item.id+")\'>Edit</button></div>";\n';
   h += '    if(item.editDesc){\n';
@@ -614,6 +655,7 @@ app.get('/', function(req, res) {
 
   h += 'function esc(s){return(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;")}\n';
   h += 'function upd(id,f,v){var i=items.find(function(x){return x.id==id});if(i){i[f]=v;updateStats()}}\n';
+  h += 'function updFirstEd(id,checked){var i=items.find(function(x){return x.id==id});if(i){i.isFirstEd=checked;if(checked)i.firstEdition="Yes";refresh(i)}}\n';
   h += 'function toggleCond(id){var i=items.find(function(x){return x.id==id});if(i){i.editCond=!i.editCond;refresh(i)}}\n';
   h += 'function updCond(id,v){var i=items.find(function(x){return x.id==id});if(i){i.condition=v;i.editCond=false;refresh(i)}}\n';
   h += 'function toggleDesc(id){var i=items.find(function(x){return x.id==id});if(i){i.editDesc=!i.editDesc;refresh(i)}}\n';
@@ -669,7 +711,7 @@ app.get('/', function(req, res) {
   h += '    })\n';
   h += '  });\n';
   h += '  return Promise.all(promises).then(function(images){\n';
-  h += '    return fetch("/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apiKey:k,images:images})})\n';
+  h += '    return fetch("/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({apiKey:k,images:images,isFirstEd:item.isFirstEd||false})})\n';
   h += '    .then(function(r){return r.json()})\n';
   h += '    .then(function(d){\n';
   h += '      if(d.error)throw new Error(d.error);\n';
@@ -698,6 +740,7 @@ app.get('/', function(req, res) {
   h += '      item.ebaySoldHigh=p.ebaySoldHigh||null;\n';
   h += '      item.ebaySoldCount=p.ebaySoldCount||null;\n';
   h += '      item.ebayActiveLow=p.ebayActiveLow||null;\n';
+  h += '      item.ebaySearchStatus=p.ebaySearchStatus||"";\n';
   h += '      item.priceNote=p.priceNote||"";\n';
   h += '      item.status="done";\n';
   h += '    })\n';
