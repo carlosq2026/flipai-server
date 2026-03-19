@@ -63,43 +63,52 @@ app.post('/analyze', async function(req, res) {
 
       var pricePrompt;
       if (isFirstEd) {
-        // ── FIRST EDITION PATH — 3 targeted searches ──
-        pricePrompt = 'You are an expert rare/collectible book reseller. Search eBay specifically for FIRST EDITION copies of this book and return ONLY raw JSON, no markdown.\n\n' +
+        // ── FIRST EDITION PATH — 4 targeted searches for 1st ed comps only ──
+        pricePrompt = 'You are an expert rare/collectible book reseller. Search for FIRST EDITION pricing only — ignore all regular edition prices. Return ONLY raw JSON, no markdown.\n\n' +
           'BOOK: ' + title + '\n' +
           'AUTHOR: ' + author + '\n' +
           'FORMAT: ' + format + '\n' +
           'CONDITION: ' + cond + '\n' +
           (isbn ? 'ISBN: ' + isbn + '\n' : '') +
-          '\nDo THREE searches:\n' +
-          '1. eBay COMPLETED/SOLD: "' + title + ' first edition" — sold prices for 1st editions only\n' +
-          '2. eBay COMPLETED/SOLD: "' + title + ' ' + author + ' first printing" — catch alternate phrasing\n' +
-          '3. eBay ACTIVE listings: "' + title + ' first edition" — lowest current ask\n' +
+          '\nDo FOUR searches in this exact order:\n' +
+          '1. Search: site:ebay.com "' + title + '" "first edition" sold — find sold first edition prices in snippets\n' +
+          '2. Search: "' + title + '" "first edition" ebay sold price — find PriceCharting, collector sites, or price guides for 1st editions\n' +
+          '3. Search: site:ebay.com "' + title + '" "first edition" ' + author + ' — active first edition listings and their prices\n' +
+          '4. Search: "' + title + '" first edition value ' + author + ' — find collector pricing guides, AbeBooks 1st ed prices\n' +
+          '\nIMPORTANT: Only use prices from listings/sales clearly marked as first edition or first printing. Ignore regular editions.\n' +
+          'Extract every dollar amount from snippets. Look for prices in eBay listing titles, PriceCharting, AbeBooks, collector sites.\n' +
           '\nPRICING FORMULA for first editions:\n' +
-          '- Use ONLY first edition sold comps — ignore regular edition prices completely\n' +
-          '- sweetSpot = ebaySoldAvg × 0.92 (undercut by 8% to sell faster than competition)\n' +
-          '- If condition is Like New or Very Good: sweetSpot = ebaySoldAvg × 0.95 (condition holds premium)\n' +
+          '- sweetSpot = ebaySoldAvg × 0.92 (undercut by 8% to move it fast)\n' +
+          '- If Like New or Very Good: sweetSpot = ebaySoldAvg × 0.95\n' +
           '- sweetSpot must be at least $1.00 below ebayActiveLow\n' +
           '- Round to nearest $0.50\n' +
-          '- priceNote must mention it is a first edition price\n\n' +
+          '- priceNote must confirm these are first edition comps\n\n' +
           'Reply ONLY with this JSON (null if not found):\n' +
           '{"ebaySoldAvg":55.00,"ebaySoldLow":35.00,"ebaySoldHigh":95.00,"ebaySoldCount":4,"ebayActiveLow":65.00,"sweetSpot":50.00,"minPrice":35.00,"maxPrice":95.00,"ebaySearchStatus":"1st","priceNote":"4 first editions sold avg $55, active from $65 — listing at $50 to be best deal"}';
       } else {
-        // ── STANDARD PATH — 2 searches ──
-        pricePrompt = 'You are an expert eBay book reseller. Search eBay for this book and return ONLY raw JSON, no markdown.\n\n' +
+        // ── STANDARD PATH — 4 targeted searches that surface real eBay data ──
+        pricePrompt = 'You are an expert eBay book reseller. Use web search to find real current eBay pricing for this book. Return ONLY raw JSON, no markdown.\n\n' +
           'BOOK: ' + title + '\n' +
           'AUTHOR: ' + author + '\n' +
           'FORMAT: ' + format + '\n' +
           'CONDITION: ' + cond + '\n' +
           (isbn ? 'ISBN: ' + isbn + '\n' : '') +
-          '\nDo TWO searches:\n' +
-          '1. eBay COMPLETED/SOLD listings (last 90 days) — real sold prices\n' +
-          '2. eBay ACTIVE listings — lowest current asking price\n' +
+          '\nDo FOUR searches in this exact order:\n' +
+          '1. Search: site:ebay.com "' + title + '" "' + author + '" — scan result snippets for prices on active listings\n' +
+          '2. Search: "' + title + '" "' + author + '" ebay sold price ' + format + ' — find PriceCharting, BookScouter, or sold listing summaries\n' +
+          '3. Search: "' + title + '" "' + author + '" site:bookscouter.com OR site:bookfinder.com OR site:abebooks.com — find market value from price aggregators\n' +
+          '4. Search: "' + title + '" ebay ' + format + ' ' + (new Date().getFullYear()) + ' — find recent sold or listed prices in news/blog snippets\n' +
+          '\nExtract every dollar amount you can find. Look for:\n' +
+          '- Prices in Google snippets from eBay listing URLs (e.g. "$12.99" in the snippet text)\n' +
+          '- Prices on BookScouter, AbeBooks, PriceCharting, BookFinder\n' +
+          '- Any "sold for $X" or "listed at $X" mentions\n' +
+          '- Price ranges shown in shopping results\n' +
           '\nPRICING FORMULA:\n' +
           '- sweetSpot = ebaySoldAvg × 0.92 (undercut by ~8% to be the best deal)\n' +
           '- If Brand New or Like New: sweetSpot = ebaySoldAvg × 0.95\n' +
           '- sweetSpot must be at least $0.50 below ebayActiveLow\n' +
           '- Round to nearest $0.50\n' +
-          '- Set ebaySearchStatus to "found" if you found real sold data, "notfound" if you could not find matching listings\n\n' +
+          '- Set ebaySearchStatus to "found" if you found real price data from any source, "notfound" only if you genuinely found zero prices\n\n' +
           'Reply ONLY with this JSON (null if not found):\n' +
           '{"ebaySoldAvg":12.00,"ebaySoldLow":8.00,"ebaySoldHigh":18.00,"ebaySoldCount":6,"ebayActiveLow":13.00,"sweetSpot":11.00,"minPrice":8.00,"maxPrice":18.00,"ebaySearchStatus":"found","priceNote":"6 sold avg $12, active from $13 — listing at $11 to move fast"}';
       }
@@ -109,7 +118,7 @@ app.post('/analyze', async function(req, res) {
         headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'web-search-2025-03-05' },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
-          max_tokens: 1500,
+          max_tokens: 2000,
           tools: [{ type: 'web_search_20250305', name: 'web_search' }],
           messages: [{ role: 'user', content: pricePrompt }]
         })
