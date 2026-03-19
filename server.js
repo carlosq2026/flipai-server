@@ -648,7 +648,14 @@ app.get('/', function(req, res) {
   h += '    else{b+="<div class=\'actions\'><button class=\'btn btn-sm btn-purple\' onclick=\'postOne("+item.id+")\'>Post to eBay</button><button class=\'btn btn-sm btn-outline\' onclick=\'analyzeOne("+item.id+")\'>Re-analyze</button><button class=\'btn btn-sm btn-outline\' onclick=\'mergeWithNext("+item.id+")\' title=\'Merge with next card\'>Merge \u2193</button></div>";}\n';
   h += '  }\n';
   h += '  else if(item.status==="error"){b+="<div style=\'color:#a0a0c0;font-size:.78rem;margin:8px 0\'>"+(item.errorMsg||"Analysis failed")+"</div><div class=\'actions\'><button class=\'btn btn-sm\' onclick=\'analyzeOne("+item.id+")\'>Retry</button><button class=\'btn btn-sm btn-outline\' onclick=\'mergeWithNext("+item.id+")\'>Merge \u2193</button></div>";}\n';
-  h += '  else{b+="<div class=\'actions\'><button class=\'btn btn-sm\' onclick=\'analyzeOne("+item.id+")\'>Analyze</button><button class=\'btn btn-sm btn-outline\' onclick=\'mergeWithNext("+item.id+")\'>Merge \u2193</button></div>";}\n';
+  h += '  else{\n';
+  h += '    var chkId2="fe"+item.id;\n';
+  h += '    b+="<div style=\'display:flex;align-items:center;gap:8px;margin:8px 0 10px\'>";\n';
+  h += '    b+="<input type=\'checkbox\' id=\'"+chkId2+"\' style=\'width:16px;height:16px;cursor:pointer;accent-color:#00e5a0\' "+(item.isFirstEd?"checked":"")+" onchange=\'updFirstEd("+item.id+",this.checked)\'>";\n';
+  h += '    b+="<label for=\'"+chkId2+"\' style=\'color:"+(item.isFirstEd?"#00e5a0":"#8888aa")+";font-size:0.78rem;cursor:pointer;user-select:none\'>"+( item.isFirstEd?"⭐ 1st Edition — premium search":"1st Edition? Check before analyzing")+"</label>";\n';
+  h += '    b+="</div>";\n';
+  h += '    b+="<div class=\'actions\'><button class=\'btn btn-sm\' onclick=\'analyzeOne("+item.id+")\'>Analyze</button><button class=\'btn btn-sm btn-outline\' onclick=\'mergeWithNext("+item.id+")\'>Merge \u2193</button></div>";\n';
+  h += '  }\n';
   h += '  b+="</div>";\n';
   h += '  return b\n';
   h += '}\n';
