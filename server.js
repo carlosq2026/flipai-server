@@ -27,23 +27,90 @@ app.post('/verify', async function(req, res) {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── ANALYZE BOOK PHOTOS (single Sonnet call) ────────────────────────────────
+// ─── ANALYZE BOOK PHOTOS — Step 1: identify, Step 2: eBay live price search ──
 app.post('/analyze', async function(req, res) {
   var apiKey = req.body.apiKey;
   var images = req.body.images;
   if (!apiKey || !images || !images.length) return res.status(400).json({ error: 'Missing apiKey or images' });
   try {
+    // STEP 1 — Identify book from photos
     var imgContent = [];
     images.forEach(function(img) {
       imgContent.push({ type: 'image', source: { type: 'base64', media_type: img.mimeType || 'image/jpeg', data: img.data } });
     });
-    imgContent.push({ type: 'text', text: 'You are a professional book reseller. Analyze ALL provided photos carefully — one may be the copyright page which confirms the title, author, publisher, year, and edition. Use every photo.\n\nRULES:\n- title/author: confirm from copyright page if visible, otherwise use cover\n- firstEdition: ONLY set to "Yes" if you can clearly read "First Edition", "First Printing", or "1st Edition" on the copyright page in the photos. Otherwise always "No" — never assume.\n- description: Write ONE punchy honest line like a real reseller would. Use this style as your template, adjusted for actual condition:\n  • Brand New: "Brand new, unread copy. Clean and tight."\n  • Like New: "Like new, barely opened. No marks or wear."\n  • Very Good: "Clean copy, minimal wear. Nice shelf copy."\n  • Good: "Wear from reading but nice clean copy, slightly curved, see photos."\n  • Acceptable: "Well read, shows wear — solid reading copy, see photos."\n  Add "First printing." at the end ONLY if firstEdition is Yes.\n- Use your knowledge of eBay used book sales to estimate prices for this exact title, format, and condition.\n\nReply ONLY with raw JSON, no markdown:\n{"title":"Full Title","author":"Author Name or Unknown","bookTitle":"Title Only","format":"Hardcover or Paperback or Trade Paperback","language":"English","description":"single honest reseller line","genre":"Fiction or Nonfiction or Mystery etc","publisher":"Publisher Name or unknown","publicationYear":"YYYY or unknown","isbn":"ISBN if visible or unknown","topic":"main subject/topic","condition":"Brand New or Like New or Very Good or Good or Acceptable","firstEdition":"Yes only if clearly seen on copyright page, otherwise No","minPrice":5,"maxPrice":25,"avgPrice":12,"suggestedPrice":10}' });
-    var r = await fetch('https://api.anthropic.com/v1/messages', {
+    imgContent.push({ type: 'text', text: 'You are a professional book reseller. Analyze ALL provided photos carefully — one may be the copyright page which confirms the title, author, publisher, year, and edition. Use every photo.\n\nRULES:\n- title/author: confirm from copyright page if visible, otherwise use cover\n- firstEdition: ONLY set to "Yes" if you can clearly read "First Edition", "First Printing", or "1st Edition" on the copyright page in the photos. Otherwise always "No" — never assume.\n- description: Write ONE punchy honest line like a real reseller would. Use this style as your template, adjusted for actual condition:\n  • Brand New: "Brand new, unread copy. Clean and tight."\n  • Like New: "Like new, barely opened. No marks or wear."\n  • Very Good: "Clean copy, minimal wear. Nice shelf copy."\n  • Good: "Wear from reading but nice clean copy, slightly curved, see photos."\n  • Acceptable: "Well read, shows wear — solid reading copy, see photos."\n  Add "First printing." at the end ONLY if firstEdition is Yes.\n- For prices, give your best estimate — Step 2 will refine with live eBay data.\n\nReply ONLY with raw JSON, no markdown:\n{"title":"Full Title","author":"Author Name or Unknown","bookTitle":"Title Only","format":"Hardcover or Paperback or Trade Paperback","language":"English","description":"single honest reseller line","genre":"Fiction or Nonfiction or Mystery etc","publisher":"Publisher Name or unknown","publicationYear":"YYYY or unknown","isbn":"ISBN if visible or unknown","topic":"main subject/topic","condition":"Brand New or Like New or Very Good or Good or Acceptable","firstEdition":"Yes only if clearly seen on copyright page, otherwise No","minPrice":5,"maxPrice":25,"avgPrice":12,"suggestedPrice":10}' });
+    var r1 = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 600, messages: [{ role: 'user', content: imgContent }] })
     });
-    res.json(await r.json());
+    var d1 = await r1.json();
+    if (d1.error) throw new Error('Step1: ' + (d1.error.message || JSON.stringify(d1.error)));
+    var t1 = (d1.content || []).map(function(b){ return b.text || ''; }).join('');
+    var s1 = t1.indexOf('{'), e1 = t1.lastIndexOf('}');
+    var bookInfo = { minPrice: 5, maxPrice: 20, avgPrice: 10, suggestedPrice: 10 };
+    if (s1 >= 0 && e1 >= 0) { try { bookInfo = Object.assign(bookInfo, JSON.parse(t1.slice(s1, e1+1))); } catch(e) {} }
+
+    // STEP 2 — eBay live search: sold + active listings (non-fatal)
+    var priceInfo = { ebaySoldAvg: null, ebaySoldLow: null, ebaySoldHigh: null, ebaySoldCount: null, ebayActiveLow: null, sweetSpot: null, priceNote: '' };
+    try {
+      var isbn = (bookInfo.isbn && bookInfo.isbn !== 'unknown') ? bookInfo.isbn : '';
+      var searchQ = isbn ? isbn : ((bookInfo.title || '') + ' ' + (bookInfo.author || '') + ' ' + (bookInfo.format || '')).trim();
+      var cond = bookInfo.condition || 'Good';
+
+      var pricePrompt = 'You are an expert eBay book reseller. Search eBay for this book and return ONLY raw JSON, no markdown.\n\n' +
+        'BOOK: ' + (bookInfo.title || 'unknown') + '\n' +
+        'AUTHOR: ' + (bookInfo.author || '') + '\n' +
+        'FORMAT: ' + (bookInfo.format || '') + '\n' +
+        'CONDITION: ' + cond + '\n' +
+        (isbn ? 'ISBN: ' + isbn + '\n' : '') +
+        '\nDo TWO searches:\n' +
+        '1. eBay COMPLETED/SOLD listings (last 90 days) for this book — get real sold prices\n' +
+        '2. eBay ACTIVE listings for this book — get the lowest current asking price\n' +
+        '\nPRICING FORMULA:\n' +
+        '- sweetSpot = ebaySoldAvg × 0.92 (undercut sold avg by ~8% to be the best deal)\n' +
+        '- If condition is Brand New or Like New: sweetSpot = ebaySoldAvg × 0.95\n' +
+        '- sweetSpot must be at least $0.50 below ebayActiveLow (beat the competition)\n' +
+        '- Round sweetSpot to nearest $0.50\n' +
+        '- minPrice = ebaySoldLow, maxPrice = ebaySoldHigh\n' +
+        '- priceNote: one sentence explaining the sweet spot\n\n' +
+        'Reply ONLY with this JSON (null if not found):\n' +
+        '{"ebaySoldAvg":12.00,"ebaySoldLow":8.00,"ebaySoldHigh":18.00,"ebaySoldCount":6,"ebayActiveLow":13.00,"sweetSpot":11.00,"minPrice":8.00,"maxPrice":18.00,"priceNote":"6 sold at avg $12, active listings from $13 — listing at $11 to move fast"}';
+
+      var r2 = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'web-search-2025-03-05' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1024,
+          tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+          messages: [{ role: 'user', content: pricePrompt }]
+        })
+      });
+      var d2 = await r2.json();
+      var t2 = (d2.content || []).map(function(b){ return b.text || ''; }).join('');
+      var s2 = t2.indexOf('{'), e2 = t2.lastIndexOf('}');
+      if (s2 >= 0 && e2 >= 0) { try { priceInfo = Object.assign(priceInfo, JSON.parse(t2.slice(s2, e2+1))); } catch(e) {} }
+      console.log('PRICE DEBUG:', JSON.stringify(priceInfo));
+    } catch(priceErr) {
+      console.error('eBay price search failed (non-fatal):', priceErr.message);
+    }
+
+    // Merge — live eBay data wins over Step 1 estimates if found
+    var merged = Object.assign({}, bookInfo, {
+      minPrice:       priceInfo.minPrice      || bookInfo.minPrice      || 5,
+      maxPrice:       priceInfo.maxPrice      || bookInfo.maxPrice      || 20,
+      avgPrice:       priceInfo.ebaySoldAvg   || bookInfo.avgPrice      || 10,
+      suggestedPrice: priceInfo.sweetSpot     || bookInfo.suggestedPrice || 10,
+      ebaySoldAvg:    priceInfo.ebaySoldAvg,
+      ebaySoldLow:    priceInfo.ebaySoldLow,
+      ebaySoldHigh:   priceInfo.ebaySoldHigh,
+      ebaySoldCount:  priceInfo.ebaySoldCount,
+      ebayActiveLow:  priceInfo.ebayActiveLow,
+      priceNote:      priceInfo.priceNote
+    });
+
+    res.json({ content: [{ type: 'text', text: JSON.stringify(merged) }] });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 // ─── UPLOAD PHOTO TO EBAY ─────────────────────────────────────────────────────
@@ -488,7 +555,11 @@ app.get('/', function(req, res) {
   h += '  else if(item.status==="posting"){b+="<div style=\'color:#ffb800;padding:8px 0\'>Uploading & posting to eBay...</div>";}\n';
   h += '  else if(item.title){\n';
   // Price range
-  h += '    b+="<div class=\'price-box\'>Range $"+item.min+"-$"+item.max+" &bull; Avg $"+item.avg+"<br><span class=\'price-big\'>List: $"+item.price+"</span></div>";\n';
+  h += '    var soldLine=item.ebaySoldAvg?"Sold avg: $"+item.ebaySoldAvg.toFixed(2)+(item.ebaySoldCount?" ("+item.ebaySoldCount+" sales)":"")+" · low $"+(item.ebaySoldLow?item.ebaySoldLow.toFixed(2):"?")+" high $"+(item.ebaySoldHigh?item.ebaySoldHigh.toFixed(2):"?"): "";\n';
+  h += '    var activeLine=item.ebayActiveLow?"Active low: $"+item.ebayActiveLow.toFixed(2):"";\n';
+  h += '    var ebayBlock=(soldLine||activeLine)?"<div style=\'color:#7ec8e3;font-size:0.72rem;margin-bottom:3px\'>"+soldLine+(soldLine&&activeLine?" · ":"")+activeLine+"</div>":"";\n';
+  h += '    var noteStr=item.priceNote?"<div style=\'color:#8888aa;font-size:0.68rem;font-style:italic;margin-bottom:4px\'>"+item.priceNote+"</div>":"";\n';
+  h += '    b+="<div class=\'price-box\'>"+ebayBlock+noteStr+"Range $"+item.min+"-$"+item.max+" &bull; Avg $"+item.avg+"<br><span class=\'price-big\'>Sweet spot: $"+item.price+"</span></div>";\n';
   // Title
   h += '    b+="<div class=\'row-lbl\'>Title</div><input class=\'ef\' value=\'"+esc(item.title)+"\' onchange=\'upd("+item.id+",\\"title\\",this.value)\'>";\n';
   // Author + Format
@@ -622,6 +693,12 @@ app.get('/', function(req, res) {
   h += '      item.max=p.maxPrice||20;\n';
   h += '      item.avg=p.avgPrice||12;\n';
   h += '      item.price=p.suggestedPrice||12;\n';
+  h += '      item.ebaySoldAvg=p.ebaySoldAvg||null;\n';
+  h += '      item.ebaySoldLow=p.ebaySoldLow||null;\n';
+  h += '      item.ebaySoldHigh=p.ebaySoldHigh||null;\n';
+  h += '      item.ebaySoldCount=p.ebaySoldCount||null;\n';
+  h += '      item.ebayActiveLow=p.ebayActiveLow||null;\n';
+  h += '      item.priceNote=p.priceNote||"";\n';
   h += '      item.status="done";\n';
   h += '    })\n';
   h += '    .catch(function(err){item.status="error";item.errorMsg=err.message.substring(0,100);toast("Error: "+item.errorMsg,"err")})\n';
