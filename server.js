@@ -37,7 +37,7 @@ app.post('/analyze', async function(req, res) {
     images.forEach(function(img) {
       imgContent.push({ type: 'image', source: { type: 'base64', media_type: img.mimeType || 'image/jpeg', data: img.data } });
     });
-    imgContent.push({ type: 'text', text: 'You are a professional book reseller with deep knowledge of the used book market. Analyze these book photos for an eBay listing. Use your knowledge of what books typically sell for on eBay to estimate realistic prices — factor in the title, author, format, edition, and condition visible in the photos. Reply ONLY with raw JSON, no markdown, no explanation:\n{"title":"Full Title","author":"Author Name or Unknown","bookTitle":"Title Only","format":"Hardcover or Paperback or Trade Paperback","language":"English","description":"2-3 sentences describing the book and visible condition","genre":"Fiction or Nonfiction or Mystery etc","publisher":"Publisher Name or unknown","publicationYear":"YYYY or unknown","isbn":"ISBN if visible or unknown","topic":"main subject/topic","condition":"Brand New or Like New or Very Good or Good or Acceptable","firstEdition":"Yes if 1st edition stated on copyright page or cover, No otherwise","minPrice":5,"maxPrice":25,"avgPrice":12,"suggestedPrice":10}' });
+    imgContent.push({ type: 'text', text: 'You are a professional book reseller. Analyze ALL provided photos carefully — one may be the copyright page which confirms the title, author, publisher, year, and edition. Use every photo.\n\nRULES:\n- title/author: confirm from copyright page if visible, otherwise use cover\n- firstEdition: ONLY set to "Yes" if you can clearly read "First Edition", "First Printing", or "1st Edition" on the copyright page in the photos. Otherwise always "No" — never assume.\n- description: Write ONE punchy honest line like a real reseller would. Use this style as your template, adjusted for actual condition:\n  • Brand New: "Brand new, unread copy. Clean and tight."\n  • Like New: "Like new, barely opened. No marks or wear."\n  • Very Good: "Clean copy, minimal wear. Nice shelf copy."\n  • Good: "Wear from reading but nice clean copy, slightly curved, see photos."\n  • Acceptable: "Well read, shows wear — solid reading copy, see photos."\n  Add "First printing." at the end ONLY if firstEdition is Yes.\n- Use your knowledge of eBay used book sales to estimate prices for this exact title, format, and condition.\n\nReply ONLY with raw JSON, no markdown:\n{"title":"Full Title","author":"Author Name or Unknown","bookTitle":"Title Only","format":"Hardcover or Paperback or Trade Paperback","language":"English","description":"single honest reseller line","genre":"Fiction or Nonfiction or Mystery etc","publisher":"Publisher Name or unknown","publicationYear":"YYYY or unknown","isbn":"ISBN if visible or unknown","topic":"main subject/topic","condition":"Brand New or Like New or Very Good or Good or Acceptable","firstEdition":"Yes only if clearly seen on copyright page, otherwise No","minPrice":5,"maxPrice":25,"avgPrice":12,"suggestedPrice":10}' });
     var r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
@@ -186,6 +186,13 @@ app.post('/post-listing', async function(req, res) {
       '<ItemSpecifics>' + specifics + '</ItemSpecifics>' +
       '<PrimaryCategory><CategoryID>' + categoryId + '</CategoryID></PrimaryCategory>' +
       '<StartPrice>' + (parseFloat(listing.price) || 9.99) + '</StartPrice>' +
+      '<BestOfferDetails>' +
+      '<BestOfferEnabled>true</BestOfferEnabled>' +
+      '</BestOfferDetails>' +
+      '<ListingDetails>' +
+      '<BestOfferAutoAcceptPrice>' + (parseFloat(listing.price) || 9.99) + '</BestOfferAutoAcceptPrice>' +
+      '<MinimumBestOfferPrice>8.00</MinimumBestOfferPrice>' +
+      '</ListingDetails>' +
       '<Country>US</Country>' +
       '<Currency>USD</Currency>' +
       '<DispatchTimeMax>3</DispatchTimeMax>' +
