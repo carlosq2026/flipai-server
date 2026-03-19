@@ -71,10 +71,10 @@ app.post('/analyze', async function(req, res) {
           'CONDITION: ' + cond + '\n' +
           (isbn ? 'ISBN: ' + isbn + '\n' : '') +
           '\nDo FOUR searches in this exact order:\n' +
-          '1. Search: site:ebay.com "' + title + '" "first edition" sold — find sold first edition prices in snippets\n' +
-          '2. Search: "' + title + '" "first edition" ebay sold price — find PriceCharting, collector sites, or price guides for 1st editions\n' +
-          '3. Search: site:ebay.com "' + title + '" "first edition" ' + author + ' — active first edition listings and their prices\n' +
-          '4. Search: "' + title + '" first edition value ' + author + ' — find collector pricing guides, AbeBooks 1st ed prices\n' +
+          '1. Search: "' + title + '" "' + author + '" "first edition" price value — hits AbeBooks, collector guides, PriceCharting with real dollar amounts\n' +
+          '2. Search: "' + title + '" first edition used book price abebooks OR bookscouter OR pricecharting — aggregators that show 1st ed prices in plain text\n' +
+          '3. Search: "' + title + '" "' + author + '" first edition ebay sold 2024 2025 — recent sold price mentions in snippets\n' +
+          '4. Search: "' + title + '" first printing collectible value — collector and rare book sites\n' +
           '\nIMPORTANT: Only use prices from listings/sales clearly marked as first edition or first printing. Ignore regular editions.\n' +
           'Extract every dollar amount from snippets. Look for prices in eBay listing titles, PriceCharting, AbeBooks, collector sites.\n' +
           '\nPRICING FORMULA for first editions:\n' +
@@ -94,12 +94,13 @@ app.post('/analyze', async function(req, res) {
           'CONDITION: ' + cond + '\n' +
           (isbn ? 'ISBN: ' + isbn + '\n' : '') +
           '\nDo TWO searches:\n' +
-          '1. Search: site:ebay.com "' + title + '" "' + author + '" — scan result snippets for prices on active listings\n' +
-          '2. Search: "' + title + '" "' + author + '" ebay sold price ' + format + ' — find PriceCharting, BookScouter, or sold listing summaries\n' +
-          '\nExtract every dollar amount you can find. Look for:\n' +
-          '- Prices in Google snippets from eBay listing URLs (e.g. "$12.99" in the snippet text)\n' +
-          '- Prices on BookScouter, AbeBooks, PriceCharting, BookFinder\n' +
-          '- Any "sold for $X" or "listed at $X" mentions\n' +
+          '1. Search: "' + title + '" "' + author + '" used book price — this hits BookScouter, AbeBooks, ThriftBooks, and price guides that show real dollar amounts in their page text\n' +
+          '2. Search: "' + title + '" "' + author + '" ebay hardcover OR paperback price sold 2024 2025 — find blog posts, price guides, and aggregator pages that summarize eBay sold prices\n' +
+          '\nExtract every dollar amount you can find from the search result text. Look for:\n' +
+          '- Any price shown directly in the snippet text like "from $4.99" or "sold for $12"\n' +
+          '- BookScouter, AbeBooks, ThriftBooks, PriceCharting prices\n' +
+          '- Price ranges like "$3 - $15" in snippet text\n' +
+          '- Shopping result prices Google shows at the top\n' +
           '\nPRICING FORMULA:\n' +
           '- sweetSpot = ebaySoldAvg × 0.92 (undercut by ~8% to be the best deal)\n' +
           '- If Brand New or Like New: sweetSpot = ebaySoldAvg × 0.95\n' +
