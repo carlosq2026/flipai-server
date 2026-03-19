@@ -556,13 +556,13 @@ app.get('/', function(req, res) {
   h += '  else if(item.status==="posting"){b+="<div style=\'color:#ffb800;padding:8px 0\'>Uploading & posting to eBay...</div>";}\n';
   h += '  else if(item.title){\n';
   // Price range
-  h += '    var dnlBanner=item.doNotList?"<div style=\'background:#3a0000;border:1px solid #ff4444;border-radius:4px;padding:4px 7px;margin-bottom:5px;color:#ff6b6b;font-size:0.72rem;font-weight:bold\'>🚫 DO NOT LIST — margin too thin vs ThriftBooks</div>":"";\n';
+  h += '    var dnlBanner="";\n';
   h += '    var ebayLine=item.ebaySoldAvg?"📦 eBay sold: $"+item.ebaySoldAvg.toFixed(2)+(item.ebaySoldCount?" ("+item.ebaySoldCount+" sales)":"")+"  "+( item.ebaySoldLow?"[$"+item.ebaySoldLow.toFixed(2)+"–$"+(item.ebaySoldHigh?item.ebaySoldHigh.toFixed(2):"?")+"]": ""):"📦 eBay sold: live data loading...";\n';
   h += '    var amzLine=item.amazonUsedLow?"🛒 Amazon used: $"+item.amazonUsedLow.toFixed(2)+" (ceiling)": "🛒 Amazon: not found";\n';
   h += '    var tbLine=item.thriftbooksPrice?"📚 ThriftBooks: $"+item.thriftbooksPrice.toFixed(2)+" (floor)":"📚 ThriftBooks: not listed";\n';
   h += '    var marginWarn=item.lowMargin?" <span style=\'color:#ff6b6b;font-size:0.68rem\'>⚠ thin margin</span>":"";\n';
   h += '    var noteStr=item.priceNote?"<div style=\'color:#8888aa;font-size:0.68rem;margin-top:4px;font-style:italic\'>"+item.priceNote+"</div>":"";\n';
-  h += '    b+="<div class=\'price-box\'>"+dnlBanner+"<div style=\'color:#7ec8e3;font-size:0.73rem\'>"+ebayLine+"</div><div style=\'color:#e8a87c;font-size:0.73rem;margin-top:2px\'>"+amzLine+"</div><div style=\'color:#a0c4a0;font-size:0.73rem;margin-top:2px\'>"+tbLine+"</div>"+noteStr+"<div style=\'margin-top:6px\'><span class=\'price-big\'>"+( item.doNotList?"🚫 Skip":"Sweet spot: $"+item.price)+"</span>"+marginWarn+"</div></div>";\n';
+  h += '    b+="<div class=\'price-box\'><div style=\'color:#7ec8e3;font-size:0.73rem\'>"+ebayLine+"</div><div style=\'color:#e8a87c;font-size:0.73rem;margin-top:2px\'>"+amzLine+"</div><div style=\'color:#a0c4a0;font-size:0.73rem;margin-top:2px\'>"+tbLine+"</div>"+noteStr+"<div style=\'margin-top:6px\'><span class=\'price-big\'>Sweet spot: $"+item.price+"</span>"+marginWarn+"</div></div>";\n';
   // Title
   h += '    b+="<div class=\'row-lbl\'>Title</div><input class=\'ef\' value=\'"+esc(item.title)+"\' onchange=\'upd("+item.id+",\\"title\\",this.value)\'>";\n';
   // Author + Format
