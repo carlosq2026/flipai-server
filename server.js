@@ -204,15 +204,16 @@ app.post('/post-listing', async function(req, res) {
       '<OriginatingPostalCode>' + postal + '</OriginatingPostalCode>' +
       '<PackagingHandlingCosts>0.00</PackagingHandlingCosts>' +
       '</CalculatedShippingRate>' +
+      '</ShippingDetails>' +
       '<ShippingPackageDetails>' +
       '<MeasurementUnit>English</MeasurementUnit>' +
-      '<PackageDepth measurementSystem="English" unit="inches">' + pkgH + '</PackageDepth>' +
-      '<PackageLength measurementSystem="English" unit="inches">' + pkgL + '</PackageLength>' +
-      '<PackageWidth measurementSystem="English" unit="inches">' + pkgW + '</PackageWidth>' +
-      '<WeightMajor measurementSystem="English" unit="lbs">' + lbs + '</WeightMajor>' +
-      '<WeightMinor measurementSystem="English" unit="oz">' + oz + '</WeightMinor>' +
+      '<PackageDepth unit="in">' + pkgH + '</PackageDepth>' +
+      '<PackageLength unit="in">' + pkgL + '</PackageLength>' +
+      '<PackageWidth unit="in">' + pkgW + '</PackageWidth>' +
+      '<WeightMajor unit="lbs">' + lbs + '</WeightMajor>' +
+      '<WeightMinor unit="oz">' + oz + '</WeightMinor>' +
+      '<ShippingPackage>PackageThickEnvelope</ShippingPackage>' +
       '</ShippingPackageDetails>' +
-      '</ShippingDetails>' +
       '<ReturnPolicy>' +
       '<ReturnsAcceptedOption>ReturnsAccepted</ReturnsAcceptedOption>' +
       '<ReturnsWithinOption>Days_30</ReturnsWithinOption>' +
