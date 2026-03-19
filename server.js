@@ -93,16 +93,13 @@ app.post('/analyze', async function(req, res) {
           'FORMAT: ' + format + '\n' +
           'CONDITION: ' + cond + '\n' +
           (isbn ? 'ISBN: ' + isbn + '\n' : '') +
-          '\nDo FOUR searches in this exact order:\n' +
+          '\nDo TWO searches:\n' +
           '1. Search: site:ebay.com "' + title + '" "' + author + '" — scan result snippets for prices on active listings\n' +
           '2. Search: "' + title + '" "' + author + '" ebay sold price ' + format + ' — find PriceCharting, BookScouter, or sold listing summaries\n' +
-          '3. Search: "' + title + '" "' + author + '" site:bookscouter.com OR site:bookfinder.com OR site:abebooks.com — find market value from price aggregators\n' +
-          '4. Search: "' + title + '" ebay ' + format + ' ' + (new Date().getFullYear()) + ' — find recent sold or listed prices in news/blog snippets\n' +
           '\nExtract every dollar amount you can find. Look for:\n' +
           '- Prices in Google snippets from eBay listing URLs (e.g. "$12.99" in the snippet text)\n' +
           '- Prices on BookScouter, AbeBooks, PriceCharting, BookFinder\n' +
           '- Any "sold for $X" or "listed at $X" mentions\n' +
-          '- Price ranges shown in shopping results\n' +
           '\nPRICING FORMULA:\n' +
           '- sweetSpot = ebaySoldAvg × 0.92 (undercut by ~8% to be the best deal)\n' +
           '- If Brand New or Like New: sweetSpot = ebaySoldAvg × 0.95\n' +
