@@ -1,10 +1,20 @@
 const express = require('express');
-const { GoogleGenerativeAI } = require("@google/generative-ai");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Initialize Gemini Client
-const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+console.log('Starting server initialization...');
+console.log('GEMINI_API_KEY present:', !!process.env.GEMINI_API_KEY);
+
+let ai;
+try {
+  const { GoogleGenerativeAI } = require("@google/generative-ai");
+  console.log('GoogleGenerativeAI module loaded');
+  ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+  console.log('GoogleGenerativeAI client initialized');
+} catch (e) {
+  console.error('Failed to initialize GoogleGenerativeAI:', e.message);
+  process.exit(1);
+}
 
 app.use(express.json({ limit: '100mb' }));
 
