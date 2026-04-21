@@ -1,14 +1,14 @@
 {
   "name": "flipai-bookslayer",
-  "version": "1.1.0",
-  "description": "eBay trading server for automated book listing using Claude and Gemini",
+  "version": "1.0.0",
+  "description": "eBay Trading Server - Gemini Edition",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "node-fetch": "^2.6.7",
+    "express": "^4.21.0",
+    "node-fetch": "^2.7.0",
     "@google/generative-ai": "^0.21.0"
   },
   "engines": {
