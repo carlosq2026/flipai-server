@@ -4,7 +4,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Initialize Gemini Client
-const ai = new GoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
+const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 app.use(express.json({ limit: '100mb' }));
 
@@ -23,21 +23,19 @@ app.post('/analyze', async function (req, res) {
   if (!photos || photos.length === 0) return res.status(400).json({ error: "No photos provided" });
 
   try {
-    // We use gemini-3-flash for the best price/speed balance in 2026
-    const interaction = await ai.interactions.create({
-      model: 'gemini-3-flash',
-      input: [
-        { type: 'text', text: "Analyze these book photos. Return ONLY a JSON object: { \"title\": \"\", \"author\": \"\", \"isbn\": \"\", \"suggestedPrice\": 0.00, \"condition\": \"\" }" },
-        ...photos.map(base64 => ({
-          type: 'image',
+    const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    
+    const response = await model.generateContent([
+      "Analyze these book photos. Return ONLY a JSON object: { \"title\": \"\", \"author\": \"\", \"isbn\": \"\", \"suggestedPrice\": 0.00, \"condition\": \"\" }",
+      ...photos.map(base64 => ({
+        inlineData: {
           data: base64.split(',')[1],
-          mime_type: 'image/jpeg'
-        }))
-      ]
-    });
+          mimeType: 'image/jpeg'
+        }
+      }))
+    ]);
 
-    // Extract and clean JSON response
-    const cleanJson = interaction.outputs[0].text.replace(/```json|```/g, "").trim();
+    const cleanJson = response.response.text().replace(/```json|```/g, "").trim();
     res.json(JSON.parse(cleanJson));
   } catch (e) {
     console.error("Gemini Error:", e);
