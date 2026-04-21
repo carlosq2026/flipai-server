@@ -1,10 +1,10 @@
 const express = require('express');
-const { GoogleGenAI } = require("@google/genai"); // New 2026 SDK
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Initialize Gemini Client
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const ai = new GoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY });
 
 app.use(express.json({ limit: '100mb' }));
 
