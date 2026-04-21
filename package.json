@@ -1,7 +1,7 @@
 {
   "name": "flipai-bookslayer",
   "version": "1.0.0",
-  "description": "eBay Trading Server - Gemini Edition",
+  "description": "eBay Trading Server",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
