@@ -37,7 +37,7 @@ app.post('/verify', async function(req, res) {
   try {
     const { GoogleGenerativeAI } = require('@google/generative-ai');
     const testClient = new GoogleGenerativeAI(apiKey);
-    const model = testClient.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = testClient.getGenerativeModel({ model: 'gemini-2.5-flash-preview-04-17' });
     await model.generateContent('hi');
     res.json({ ok: true });
   } catch(e) {
@@ -57,7 +57,7 @@ app.post('/analyze', async function(req, res) {
     var geminiKey = apiKey || process.env.GEMINI_API_KEY;
     var gemini = new GoogleGenerativeAI(geminiKey);
     // STEP 1 — Identify book from photos using Gemini Vision
-    var model = gemini.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    var model = gemini.getGenerativeModel({ model: 'gemini-2.5-flash-preview-04-17' });
 
     var prompt = 'You are a professional book reseller. Analyze ALL provided photos carefully — one may be the copyright page which confirms the title, author, publisher, year, and edition. Use every photo.\n\nRULES:\n- title/author: confirm from copyright page if visible, otherwise use cover\n- firstEdition: ONLY set to "Yes" if you can clearly read "First Edition", "First Printing", or "1st Edition" on the copyright page in the photos. Otherwise always "No" — never assume.\n- description: Write ONE punchy honest line like a real reseller would. Use this style as your template, adjusted for actual condition:\n  • Brand New: "Brand new, unread copy. Clean and tight. Book condition shown in pictures."\n  • Like New: "Like new, barely opened. No marks or wear. Book condition shown in pictures."\n  • Very Good: "Clean copy, minimal wear. Nice shelf copy. Book condition shown in pictures."\n  • Good: "Wear from reading but nice clean copy, slightly curved. Book condition shown in pictures."\n  • Acceptable: "Well read, shows wear — solid reading copy. Book condition shown in pictures."\n  Always end every description with "Book condition shown in pictures."\n  Never say "see photos" — use the line above instead.\n  Add "First printing." at the end ONLY if firstEdition is Yes (after the pictures line).\n- For prices, use your deep knowledge of the used book market. Give realistic prices for this exact title, author, format and condition — what buyers actually pay on eBay, not list price.\n\nReply ONLY with raw JSON, no markdown:\n{"title":"Full Title","author":"Author Name or Unknown","bookTitle":"Title Only","format":"Hardcover or Paperback or Trade Paperback","language":"English","description":"single honest reseller line","genre":"Fiction or Nonfiction or Mystery etc","publisher":"Publisher Name or unknown","publicationYear":"YYYY or unknown","isbn":"ISBN if visible or unknown","topic":"main subject/topic","condition":"Brand New or Like New or Very Good or Good or Acceptable","firstEdition":"Yes only if clearly seen on copyright page, otherwise No","minPrice":5,"maxPrice":25,"avgPrice":12,"suggestedPrice":10}';
 
@@ -101,7 +101,7 @@ app.post('/analyze', async function(req, res) {
           '{"ebaySoldAvg":55.00,"ebaySoldLow":35.00,"ebaySoldHigh":95.00,"ebaySoldCount":4,"ebayActiveLow":65.00,"sweetSpot":50.00,"minPrice":35.00,"maxPrice":95.00,"ebaySearchStatus":"1st","priceNote":"4 first editions sold avg $55, active from $65 — listing at $50 to be best deal"}';
 
         var searchModel = gemini.getGenerativeModel({
-          model: 'gemini-2.5-flash',
+          model: 'gemini-2.5-flash-preview-04-17',
           tools: [{ googleSearch: {} }]
         });
         var r2 = await searchModel.generateContent(pricePrompt);
