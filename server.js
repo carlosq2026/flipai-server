@@ -212,13 +212,17 @@ app.post('/post-listing', async function(req, res) {
     var conditionMap = { 'brand new':'1000','like new':'2750','very good':'4000','good':'5000','acceptable':'6000' };
     var conditionId = conditionMap[(listing.condition || 'Good').trim().toLowerCase()] || '5000';
 
+    // eBay verified leaf category IDs for books
     var categoryMap = {
       'fiction':'261186','mystery':'261186','romance':'261186','thriller':'261186',
-      'nonfiction':'11232','non-fiction':'11232','self-help':'11232','self help':'11232',
-      'business':'11232','biography':'11232','history':'11232','science':'11232',
+      'science fiction':'261186','fantasy':'261186','horror':'261186',
+      'nonfiction':'267','non-fiction':'267','self-help':'11232','self help':'11232',
+      'business':'11232','biography':'267','history':'267','science':'267',
+      'religion':'11232','cooking':'11232','travel':'267','art':'267',
       'children':'11721',"children's":'11721','comics':'259104','graphic novel':'259104'
     };
-    var categoryId = categoryMap[(listing.genre || '').toLowerCase()] || '11232';
+    var genreKey = (listing.genre || '').toLowerCase();
+    var categoryId = categoryMap[genreKey] || '267';
 
     var specifics = '';
     specifics += '<NameValueList><n>Author</n><Value>' + esc(listing.author || 'Unknown') + '</Value></NameValueList>';
@@ -249,6 +253,11 @@ app.post('/post-listing', async function(req, res) {
       pictureXml +
       '<ItemSpecifics>' + specifics + '</ItemSpecifics>' +
       '<PrimaryCategory><CategoryID>' + categoryId + '</CategoryID></PrimaryCategory>' +
+      '<ProductListingDetails>' +
+      '<UPC>Does not apply</UPC>' +
+      '<IncludeStockPhotoURL>false</IncludeStockPhotoURL>' +
+      '<UseStockPhotoURLAsGallery>false</UseStockPhotoURLAsGallery>' +
+      '</ProductListingDetails>' +
       '<StartPrice>' + (parseFloat(listing.price) || 9.99) + '</StartPrice>' +
       '<BestOfferDetails><BestOfferEnabled>true</BestOfferEnabled></BestOfferDetails>' +
       '<ListingDetails>' +
