@@ -295,10 +295,24 @@ app.post('/post-listing', async function(req, res) {
       '</ProductListingDetails>' +
       '<StartPrice>' + Math.min(parseFloat(listing.price) || 9.99, 999.99) + '</StartPrice>' +
       '<BestOfferDetails><BestOfferEnabled>true</BestOfferEnabled></BestOfferDetails>' +
-      '<ListingDetails>' +
-      '<BestOfferAutoAcceptPrice>' + ((parseFloat(listing.price) || 9.99) - 0.01).toFixed(2) + '</BestOfferAutoAcceptPrice>' +
-      '<MinimumBestOfferPrice>8.00</MinimumBestOfferPrice>' +
-      '</ListingDetails>' +
+      (function(){
+        var p = Math.min(parseFloat(listing.price) || 9.99, 999.99);
+        var autoAccept = parseFloat((p - 0.01).toFixed(2));
+        if (p >= 15.00) {
+          // Over $15 — no minimum, auto-accept at list price
+          return '<ListingDetails>' +
+            '<BestOfferAutoAcceptPrice>' + autoAccept + '</BestOfferAutoAcceptPrice>' +
+            '</ListingDetails>';
+        } else {
+          // Under $15 — floor at 75% of list price (25% max discount)
+          var minOffer = parseFloat((p * 0.75).toFixed(2));
+          if (minOffer >= p) return ''; // safety: skip if price too low
+          return '<ListingDetails>' +
+            '<BestOfferAutoAcceptPrice>' + autoAccept + '</BestOfferAutoAcceptPrice>' +
+            '<MinimumBestOfferPrice>' + minOffer + '</MinimumBestOfferPrice>' +
+            '</ListingDetails>';
+        }
+      })() +
       '<Country>US</Country><Currency>USD</Currency>' +
       '<DispatchTimeMax>3</DispatchTimeMax>' +
       '<ListingDuration>GTC</ListingDuration>' +
