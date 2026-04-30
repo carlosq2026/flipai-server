@@ -215,29 +215,61 @@ app.post('/post-listing', async function(req, res) {
     var conditionMap = { 'brand new':'1000','like new':'2750','very good':'4000','good':'5000','acceptable':'6000' };
     var conditionId = conditionMap[(listing.condition || 'Good').trim().toLowerCase()] || '5000';
 
-    // eBay verified leaf category IDs for books
+    // eBay Books & Magazines leaf category IDs (verified from eBay draft UI)
     var categoryMap = {
-      'fiction':'261186','mystery':'261186','romance':'261186','thriller':'261186',
-      'science fiction':'261186','fantasy':'261186','horror':'261186',
-      'nonfiction':'267','non-fiction':'267','self-help':'11232','self help':'11232',
-      'business':'11232','biography':'267','history':'267','science':'267',
-      'religion':'11232','cooking':'11232','travel':'267','art':'267',
-      'children':'11721',"children's":'11721','comics':'259104','graphic novel':'259104'
+      'fiction':'261186',
+      'mystery':'261186',
+      'romance':'261186',
+      'thriller':'261186',
+      'science fiction':'261186',
+      'fantasy':'261186',
+      'horror':'261186',
+      'nonfiction':'171228',
+      'non-fiction':'171228',
+      'self-help':'171228',
+      'self help':'171228',
+      'business':'171228',
+      'biography':'171228',
+      'history':'171228',
+      'science':'171228',
+      'religion':'171228',
+      'cooking':'171228',
+      'travel':'171228',
+      'art':'171228',
+      'children':'11721',
+      "children's":'11721',
+      'comics':'259104',
+      'graphic novel':'259104'
     };
     var genreKey = (listing.genre || '').toLowerCase();
+    // Default to 267 (Books — general leaf that eBay accepts for any book)
     var categoryId = categoryMap[genreKey] || '267';
 
     var specifics = '';
-    specifics += '<NameValueList><n>Author</n><Value>' + esc(listing.author || 'Unknown') + '</Value></NameValueList>';
-    if (listing.bookTitle) specifics += '<NameValueList><n>Book Title</n><Value>' + esc(listing.bookTitle) + '</Value></NameValueList>';
-    if (listing.format) specifics += '<NameValueList><n>Format</n><Value>' + esc(listing.format) + '</Value></NameValueList>';
-    specifics += '<NameValueList><n>Language</n><Value>English</Value></NameValueList>';
-    if (listing.genre) specifics += '<NameValueList><n>Genre</n><Value>' + esc(listing.genre) + '</Value></NameValueList>';
-    if (listing.publisher && listing.publisher !== 'unknown') specifics += '<NameValueList><n>Publisher</n><Value>' + esc(listing.publisher) + '</Value></NameValueList>';
-    if (listing.publicationYear && listing.publicationYear !== 'unknown') specifics += '<NameValueList><n>Publication Year</n><Value>' + esc(listing.publicationYear) + '</Value></NameValueList>';
-    if (listing.isbn && listing.isbn !== 'unknown') specifics += '<NameValueList><n>ISBN</n><Value>' + esc(listing.isbn) + '</Value></NameValueList>';
-    if (listing.topic) specifics += '<NameValueList><n>Topic</n><Value>' + esc(listing.topic) + '</Value></NameValueList>';
-    if (listing.firstEdition === 'Yes') specifics += '<NameValueList><n>Edition</n><Value>1st Edition</Value></NameValueList>';
+    // Required by eBay (matches their draft UI: Book Title, Author, Language, Publisher, Format, Edition)
+    specifics += '<NameValueList><Name>Book Title</Name><Value>' + esc((listing.bookTitle || listing.title || 'Unknown').substring(0,65)) + '</Value></NameValueList>';
+    specifics += '<NameValueList><Name>Author</Name><Value>' + esc(listing.author || 'Unknown') + '</Value></NameValueList>';
+    specifics += '<NameValueList><Name>Language</Name><Value>English</Value></NameValueList>';
+    specifics += '<NameValueList><Name>Format</Name><Value>' + esc(listing.format || 'Hardcover') + '</Value></NameValueList>';
+    if (listing.publisher && listing.publisher !== 'unknown') {
+      specifics += '<NameValueList><Name>Publisher</Name><Value>' + esc(listing.publisher) + '</Value></NameValueList>';
+    }
+    if (listing.firstEdition === 'Yes') {
+      specifics += '<NameValueList><Name>Edition</Name><Value>1st Edition</Value></NameValueList>';
+    }
+    // Optional but helpful
+    if (listing.publicationYear && listing.publicationYear !== 'unknown') {
+      specifics += '<NameValueList><Name>Publication Year</Name><Value>' + esc(listing.publicationYear) + '</Value></NameValueList>';
+    }
+    if (listing.isbn && listing.isbn !== 'unknown') {
+      specifics += '<NameValueList><Name>ISBN</Name><Value>' + esc(listing.isbn) + '</Value></NameValueList>';
+    }
+    if (listing.genre) {
+      specifics += '<NameValueList><Name>Genre</Name><Value>' + esc(listing.genre) + '</Value></NameValueList>';
+    }
+    if (listing.topic) {
+      specifics += '<NameValueList><Name>Subject</Name><Value>' + esc(listing.topic) + '</Value></NameValueList>';
+    }
 
     var weightFloat = parseFloat(listing.weightLbs) || 2;
     var lbs = Math.floor(weightFloat);
@@ -261,7 +293,7 @@ app.post('/post-listing', async function(req, res) {
       '<IncludeStockPhotoURL>false</IncludeStockPhotoURL>' +
       '<UseStockPhotoURLAsGallery>false</UseStockPhotoURLAsGallery>' +
       '</ProductListingDetails>' +
-      '<StartPrice>' + (parseFloat(listing.price) || 9.99) + '</StartPrice>' +
+      '<StartPrice>' + Math.min(parseFloat(listing.price) || 9.99, 999.99) + '</StartPrice>' +
       '<BestOfferDetails><BestOfferEnabled>true</BestOfferEnabled></BestOfferDetails>' +
       '<ListingDetails>' +
       '<BestOfferAutoAcceptPrice>' + ((parseFloat(listing.price) || 9.99) - 0.01).toFixed(2) + '</BestOfferAutoAcceptPrice>' +
